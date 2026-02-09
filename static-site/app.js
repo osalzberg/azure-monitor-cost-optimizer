@@ -52,13 +52,86 @@ const analysisQueries = {
         | order by AvgSamplesPerHour desc
         | take 10
     `,
-    // Check for Basic Logs candidates
+    // Check for Basic Logs candidates - comprehensive list from https://learn.microsoft.com/azure/azure-monitor/logs/basic-logs-azure-tables
     basicLogsCandidates: `
+        let BasicLogsTables = dynamic([
+            // Application Insights
+            'AppTraces',
+            // Container & Kubernetes
+            'ContainerLog', 'ContainerLogV2', 'ContainerAppConsoleLogs', 'AppEnvSpringAppConsoleLogs',
+            'ArcK8sAudit', 'ArcK8sAuditAdmin', 'ArcK8sControlPlane', 'AKSAudit', 'AKSAuditAdmin', 'AKSControlPlane',
+            'RetinaNetworkFlowLogs', 'ContainerNetworkLogs',
+            // Syslog & Security
+            'Syslog', 'SecurityEvent', 'CommonSecurityLog',
+            // Azure Diagnostics
+            'AzureDiagnostics', 'AzureMetrics', 'AzureMetricsV2',
+            // Storage
+            'StorageTableLogs', 'StorageQueueLogs', 'StorageFileLogs', 'StorageBlobLogs',
+            // Firewall
+            'AZFWNetworkRule', 'AZFWFatFlow', 'AZFWFlowTrace', 'AZFWApplicationRule', 'AZFWThreatIntel',
+            'AZFWNatRule', 'AZFWIdpsSignature', 'AZFWDnsQuery', 'AZFWInternalFqdnResolutionFailure',
+            'AZFWNetworkRuleAggregation', 'AZFWApplicationRuleAggregation', 'AZFWNatRuleAggregation', 'AZFWDnsFlowTrace',
+            // Cosmos DB
+            'CDBDataPlaneRequests', 'CDBDataPlaneRequests5M', 'CDBDataPlaneRequests15M', 'CDBPartitionKeyStatistics',
+            'CDBPartitionKeyRUConsumption', 'CDBQueryRuntimeStatistics', 'CDBMongoRequests', 'CDBCassandraRequests',
+            'CDBGremlinRequests', 'CDBTableApiRequests', 'CDBControlPlaneRequests', 'VCoreMongoRequests',
+            // Event Hubs & Service Bus
+            'AZMSApplicationMetricLogs', 'AZMSOperationalLogs', 'AZMSRunTimeAuditLogs', 'AZMSDiagnosticErrorLogs',
+            'AZMSVnetConnectionEvents', 'AZMSArchiveLogs', 'AZMSAutoscaleLogs', 'AZMSKafkaCoordinatorLogs',
+            'AZMSKafkaUserErrorLogs', 'AZMSCustomerManagedKeyUserLogs', 'AZMSHybridConnectionsEvents',
+            // Key Vault
+            'AZKVAuditLogs', 'AZKVPolicyEvaluationDetailsLogs',
+            // AVS
+            'AVSVcSyslog', 'AVSEsxiFirewallSyslog', 'AVSEsxiSyslog', 'AVSNsxManagerSyslog', 'AVSNsxEdgeSyslog', 'AVSSyslog',
+            // Sentinel ASim
+            'ASimWebSessionLogs', 'ASimAlertEventLogs', 'ASimDhcpEventLogs', 'ASimFileEventLogs',
+            'ASimUserManagementActivityLogs', 'ASimRegistryEventLogs', 'ASimAuditEventLogs',
+            'ASimAuthenticationEventLogs', 'ASimDnsActivityLogs', 'ASimNetworkSessionLogs', 'ASimProcessEventLogs',
+            // AAD & Sign-in
+            'AADGraphActivityLogs', 'SigninLogs', 'AADFirstPartyToFirstPartySignInLogs', 'AADManagedIdentitySignInLogs',
+            'AADNonInteractiveUserSignInLogs', 'AADProvisioningLogs', 'AADServicePrincipalSignInLogs', 'ADFSSignInLogs',
+            // Databricks
+            'DatabricksBrickStoreHttpGateway', 'DatabricksDashboards', 'DatabricksCloudStorageMetadata',
+            'DatabricksPredictiveOptimization', 'DatabricksDataMonitoring', 'DatabricksIngestion',
+            'DatabricksMarketplaceConsumer', 'DatabricksLineageTracking', 'DatabricksFilesystem', 'DatabricksApps',
+            'DatabricksClusterPolicies', 'DatabricksDataRooms', 'DatabricksGroups', 'DatabricksMarketplaceProvider',
+            'DatabricksOnlineTables', 'DatabricksRBAC', 'DatabricksRFA', 'DatabricksVectorSearch',
+            'DatabricksWebhookNotifications', 'DatabricksWorkspaceFiles', 'DatabricksLakeviewConfig', 'DatabricksFiles',
+            'DatabricksBudgetPolicyCentral', 'DatabricksAccounts', 'DatabricksClusters', 'DatabricksDBFS',
+            'DatabricksInstancePools', 'DatabricksJobs', 'DatabricksNotebook', 'DatabricksSQL',
+            'DatabricksSQLPermissions', 'DatabricksSSH',
+            // Synapse
+            'SynapseSqlPoolExecRequests', 'SynapseSqlPoolRequestSteps', 'SynapseSqlPoolDmsWorkers',
+            'SynapseSqlPoolWaits', 'SynapseSqlPoolSqlRequests',
+            // PostgreSQL
+            'PGSQLPgStatActivitySessions', 'PGSQLDbTransactionsStats', 'PGSQLQueryStoreRuntime',
+            'PGSQLQueryStoreWaits', 'PGSQLAutovacuumStats', 'PGSQLServerLogs', 'PGSQLQueryStoreQueryText',
+            // MySQL
+            'MySqlAuditLogs', 'MySqlSlowLogs',
+            // Log Analytics
+            'LAQueryLogs', 'LASummaryLogs', 'LAJobLogs', 'OTelSpans', 'OTelEvents', 'OTelLogs', 'OTelTraces', 'OTelTracesAgent',
+            // Communication Services
+            'ACSSMSIncomingOperations', 'ACSOptOutManagementOperations', 'ACSCallDiagnostics',
+            'ACSCallDiagnosticsUpdates', 'ACSCallingMetrics', 'ACSCallClientServiceRequestAndOutcome',
+            'ACSCallClientOperations', 'ACSCallClientMediaStatsTimeSeries', 'ACSCallSummary', 'ACSCallSummaryUpdates',
+            'ACSCallRecordingIncomingOperations', 'ACSCallRecordingSummary', 'ACSCallClosedCaptionsSummary',
+            'ACSJobRouterIncomingOperations', 'ACSRoomsIncomingOperations', 'ACSCallAutomationIncomingOperations',
+            'ACSCallAutomationMediaSummary', 'ACSCallAutomationStreamingUsage', 'ACSAdvancedMessagingOperations',
+            // Dev Center
+            'DevCenterDiagnosticLogs', 'DevCenterResourceOperationLogs', 'DevCenterBillingEventLogs',
+            'DevCenterAgentHealthLogs', 'DevCenterConnectionLogs',
+            // Other common tables
+            'DNSQueryLogs', 'NatGatewayFlowlogsV1', 'NSPAccessLogs', 'AGWAccessLogs', 'AGWPerformanceLogs', 'AGWFirewallLogs',
+            'AGCAccessLogs', 'AGCFirewallLogs', 'ALBHealthEvent', 'AMSKeyDeliveryRequests', 'AMSMediaAccountHealth',
+            'AMSLiveEventOperations', 'AMSStreamingEndpointRequests', 'StorageMalwareScanningResults',
+            'ThreatIntelObjects', 'ThreatIntelIndicators', 'SecurityAttackPathData'
+        ]);
         Usage
         | where TimeGenerated > ago(30d)
         | where IsBillable == true
-        | where DataType in ('ContainerLog', 'ContainerLogV2', 'AppTraces', 'AppDependencies', 'Syslog', 'AzureDiagnostics')
+        | where DataType in (BasicLogsTables)
         | summarize BillableGB = sum(Quantity) / 1000 by DataType
+        | where BillableGB > 0.01
         | order by BillableGB desc
     `,
     topTables: `
@@ -249,13 +322,16 @@ ALWAYS analyze and report on ALL of these areas in order:
 - Calculate exact savings: (daily_gb * 30 * $2.76) vs commitment tier price
 
 ## 2. BASIC LOGS CANDIDATES (REQUIRED) - Specify which workspace
-Check these tables for Basic Logs conversion (50% savings):
-- ContainerLogV2, ContainerLog
-- AppTraces, AppDependencies  
-- AzureDiagnostics (verbose resources)
-- Syslog (non-security)
-- Custom logs used for debugging
-If any of these tables appear in the data, recommend Basic Logs and say which workspace.
+Many Azure tables support Basic Logs (50% cost savings). Common high-volume candidates include:
+- Container/Kubernetes: ContainerLogV2, ContainerLog, AKSAudit, AKSAuditAdmin, AKSControlPlane
+- Application: AppTraces, Syslog, AzureDiagnostics
+- Storage: StorageBlobLogs, StorageFileLogs, StorageQueueLogs, StorageTableLogs  
+- Firewall: AZFWNetworkRule, AZFWApplicationRule, AZFWFlowTrace, AZFWDnsQuery
+- Security (non-alerting): SecurityEvent, CommonSecurityLog (for verbose logs)
+- Database: CDBDataPlaneRequests, SynapseSqlPool*, MySQL/PostgreSQL logs
+- Sign-in: SigninLogs, AADNonInteractiveUserSignInLogs
+- Full list: https://aka.ms/basiclogs-tables
+If any Basic Logs candidates appear in the data, recommend converting them.
 
 ## 3. DATA COLLECTION OPTIMIZATION (REQUIRED) - Specify which workspace
 - Heartbeat frequency: If Heartbeat table exists, check if computers send >60 heartbeats/hour (default is 1/min = 60/hour). Recommend reducing to 5-min intervals if appropriate.
