@@ -69,46 +69,66 @@ function copyCommand() {
 // Sign in with pasted token
 function signInWithToken() {
     const tokenInput = document.getElementById('tokenInput');
-    const token = tokenInput.value.trim();
+    let token = tokenInput.value.trim();
+    
+    // Remove any quotes that might have been copied
+    token = token.replace(/^["']|["']$/g, '');
+    // Remove any newlines
+    token = token.replace(/[\r\n]/g, '');
     
     if (!token) {
         showError('Please paste your access token', 'Run the az command shown above and paste the result.');
         return;
     }
     
-    // Validate token format (JWT has 3 parts)
+    // Try to validate as JWT, but also accept if it just looks like a long token
     const parts = token.split('.');
-    if (parts.length !== 3) {
-        showError('Invalid token format', 'The token should be a JWT (three parts separated by dots). Make sure you copied the entire token.');
+    
+    // Azure tokens are JWTs with 3 parts
+    if (parts.length === 3) {
+        try {
+            // Decode token to get expiry and username
+            const payload = JSON.parse(atob(parts[1]));
+            const exp = payload.exp * 1000; // Convert to milliseconds
+            
+            if (exp < Date.now()) {
+                showError('Token expired', 'Please generate a fresh token using the az command.');
+                return;
+            }
+            
+            const username = payload.upn || payload.unique_name || payload.preferred_username || 'User';
+            
+            accessToken = token;
+            
+            // Save token
+            localStorage.setItem('azureToken', JSON.stringify({
+                token: token,
+                username: username,
+                expiresAt: exp
+            }));
+            
+            onSignedIn(username);
+            return;
+            
+        } catch (e) {
+            console.error('Token decode error:', e);
+            // Fall through to try using it anyway
+        }
+    }
+    
+    // If we couldn't parse it as JWT but it looks like a token, try to use it anyway
+    if (token.length > 100) {
+        accessToken = token;
+        localStorage.setItem('azureToken', JSON.stringify({
+            token: token,
+            username: 'User',
+            expiresAt: Date.now() + (60 * 60 * 1000) // Assume 1 hour
+        }));
+        onSignedIn('User');
         return;
     }
     
-    try {
-        // Decode token to get expiry and username
-        const payload = JSON.parse(atob(parts[1]));
-        const exp = payload.exp * 1000; // Convert to milliseconds
-        
-        if (exp < Date.now()) {
-            showError('Token expired', 'Please generate a fresh token using the az command.');
-            return;
-        }
-        
-        const username = payload.upn || payload.unique_name || payload.preferred_username || 'User';
-        
-        accessToken = token;
-        
-        // Save token
-        localStorage.setItem('azureToken', JSON.stringify({
-            token: token,
-            username: username,
-            expiresAt: exp
-        }));
-        
-        onSignedIn(username);
-        
-    } catch (e) {
-        showError('Invalid token', 'Could not parse the token. Please make sure you copied it correctly.');
-    }
+    showError('Invalid token', 'The token appears to be incomplete. Make sure you copied the entire output from the az command (it\'s a very long string).');
 }
 
 // Sign Out
