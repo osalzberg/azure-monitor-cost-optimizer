@@ -94,17 +94,35 @@
                         <summary>🤖 AI Settings (for enhanced recommendations)</summary>
                         <div class="ai-settings-content">
                             <p>Provide your Azure OpenAI details for AI-powered recommendations. Without these, you'll get rule-based analysis.</p>
+                            
+                            <div class="ai-help-section" style="background: #f0f7ff; border-left: 4px solid #0078d4; padding: 12px; margin-bottom: 16px; border-radius: 0 8px 8px 0; font-size: 0.9em;">
+                                <strong>📘 How to get these from Azure AI Foundry:</strong>
+                                <ol style="margin: 8px 0 0 0; padding-left: 20px; line-height: 1.6;">
+                                    <li>Go to <a href="https://ai.azure.com" target="_blank" style="color: #0078d4;">ai.azure.com</a> and sign in</li>
+                                    <li>Select your project (or create one)</li>
+                                    <li>Go to <strong>Deployments</strong> in the left menu</li>
+                                    <li>Deploy a model (e.g., gpt-4, gpt-4o) if you haven't already</li>
+                                    <li>Click on your deployment → Copy the <strong>Target URI</strong> (this is your Endpoint)</li>
+                                    <li>Go to <strong>Project settings</strong> → <strong>Keys and Endpoints</strong></li>
+                                    <li>Copy <strong>Key 1</strong> (this is your API Key)</li>
+                                    <li>The <strong>Deployment Name</strong> is the name you gave your deployment (e.g., "gpt-4")</li>
+                                </ol>
+                            </div>
+
                             <div class="form-group">
                                 <label for="openaiEndpoint">Azure OpenAI Endpoint</label>
                                 <input type="text" id="openaiEndpoint" placeholder="https://your-resource.openai.azure.com">
+                                <small style="color: #666; font-size: 0.8em;">Target URI from AI Foundry deployment</small>
                             </div>
                             <div class="form-group">
                                 <label for="openaiKey">API Key</label>
                                 <input type="password" id="openaiKey" placeholder="Your Azure OpenAI API key">
+                                <small style="color: #666; font-size: 0.8em;">Key 1 from Project settings → Keys and Endpoints</small>
                             </div>
                             <div class="form-group">
                                 <label for="openaiDeployment">Deployment Name</label>
                                 <input type="text" id="openaiDeployment" placeholder="gpt-4" value="gpt-4">
+                                <small style="color: #666; font-size: 0.8em;">Name of your deployed model (e.g., gpt-4, gpt-4o)</small>
                             </div>
                             <button type="button" class="save-settings-btn" onclick="saveAISettings()">💾 Save Settings</button>
                         </div>
