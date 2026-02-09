@@ -1498,4 +1498,94 @@ footer a:hover {
 .auth-required-content .primary-btn:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-hover);
+}/* AI Settings Panel */
+.ai-settings {
+    background: var(--neutral-light);
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #ddd;
+}
+
+.ai-settings summary {
+    padding: 15px 20px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--azure-dark);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ai-settings summary::-webkit-details-marker {
+    display: none;
+}
+
+.ai-settings summary::after {
+    content: '▶';
+    margin-left: auto;
+    font-size: 0.8rem;
+    transition: transform 0.2s;
+}
+
+.ai-settings[open] summary::after {
+    transform: rotate(90deg);
+}
+
+.ai-settings-content {
+    padding: 0 20px 20px 20px;
+}
+
+.ai-settings-content p {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 15px;
+}
+
+.ai-settings-content .form-group {
+    margin-bottom: 15px;
+}
+
+.ai-settings-content .form-group label {
+    font-size: 0.9rem;
+}
+
+.ai-settings-content .form-group input {
+    padding: 10px 12px;
+    font-size: 0.9rem;
+}
+
+.save-settings-btn {
+    padding: 10px 20px;
+    background: var(--azure-blue);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+}
+
+.save-settings-btn:hover {
+    background: var(--azure-dark);
+}
+
+.ai-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    padding: 4px 10px;
+    border-radius: 12px;
+    margin-left: 10px;
+}
+
+.ai-status.configured {
+    background: #e8f5e9;
+    color: var(--success-green);
+}
+
+.ai-status.not-configured {
+    background: #fff3e0;
+    color: var(--warning-orange);
 }
