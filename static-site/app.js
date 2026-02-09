@@ -238,24 +238,26 @@ async function getAIRecommendations(allQueryData, dataSummary, aiSettings, userC
     
     const systemPrompt = `You are an Azure Monitor cost optimization expert following Microsoft's official guidance at aka.ms/costopt.
 
+IMPORTANT: When analyzing MULTIPLE workspaces, ALWAYS specify which workspace each finding applies to. Use the workspace name in your recommendations.
+
 ALWAYS analyze and report on ALL of these areas in order:
 
-## 1. COMMITMENT TIER ANALYSIS (REQUIRED)
+## 1. COMMITMENT TIER ANALYSIS (REQUIRED) - Per workspace or combined
 - If daily ingestion >= 100 GB/day: RECOMMEND commitment tier (saves ~17-30%)
 - If 50-99 GB/day: Monitor and plan for commitment tier
 - If < 50 GB/day: Pay-as-you-go is optimal
 - Calculate exact savings: (daily_gb * 30 * $2.76) vs commitment tier price
 
-## 2. BASIC LOGS CANDIDATES (REQUIRED)
+## 2. BASIC LOGS CANDIDATES (REQUIRED) - Specify which workspace
 Check these tables for Basic Logs conversion (50% savings):
 - ContainerLogV2, ContainerLog
 - AppTraces, AppDependencies  
 - AzureDiagnostics (verbose resources)
 - Syslog (non-security)
 - Custom logs used for debugging
-If any of these tables appear in the data, recommend Basic Logs.
+If any of these tables appear in the data, recommend Basic Logs and say which workspace.
 
-## 3. DATA COLLECTION OPTIMIZATION (REQUIRED)
+## 3. DATA COLLECTION OPTIMIZATION (REQUIRED) - Specify which workspace
 - Heartbeat frequency: If Heartbeat table exists, check if computers send >60 heartbeats/hour (default is 1/min = 60/hour). Recommend reducing to 5-min intervals if appropriate.
 - Performance counters: Check Perf table - recommend reducing collection frequency from 10s to 60s for non-critical counters
 - Container Insights: If ContainerLog* tables exist, recommend filtering stdout/stderr, excluding namespaces
@@ -266,15 +268,15 @@ If any of these tables appear in the data, recommend Basic Logs.
 - Recommend archive tier for data needed >90 days
 - Security tables may need longer retention (compliance)
 
-## 5. TABLE-SPECIFIC RECOMMENDATIONS (REQUIRED)
-For EACH top table by volume, provide specific recommendations.
+## 5. TABLE-SPECIFIC RECOMMENDATIONS (REQUIRED) - Specify which workspace
+For EACH top table by volume, provide specific recommendations including which workspace it's in.
 
 FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 
 [CARD:info]
 [TITLE]📊 Data Overview[/TITLE]
 [IMPACT]Total: X GB/month, ~$Y/month[/IMPACT]
-Summary of findings in 2-3 sentences.
+List each workspace with its ingestion: "WorkspaceName (ResourceGroup): X.XX GB"
 [/CARD]
 
 Then for each finding use:
@@ -283,12 +285,26 @@ Then for each finding use:
 [CARD:success] for things already optimized
 [CARD:info] for informational items
 
-Each card must have [TITLE], [IMPACT] (with $ amount or % savings), and [ACTION] with specific steps.
-Include [DOCS] with relevant Microsoft docs link.
+Each card must have:
+- [TITLE] that includes the workspace name if workspace-specific
+- [IMPACT] (with $ amount or % savings)
+- [ACTION] with specific steps mentioning the workspace name
+- Include [DOCS] with relevant Microsoft docs link.
+
+Example title format: "💡 Basic Logs Opportunity - my-workspace-name"
 
 End with a [CARD:info] summary card listing top 3 actions by impact.
 
 Be CONSISTENT - always check the same things, always provide the same recommendations for the same data patterns.`;
+
+    // Build workspace breakdown for prompt
+    let workspaceBreakdown = '';
+    for (const [rgName, rgData] of Object.entries(dataSummary.byResourceGroup)) {
+        workspaceBreakdown += `\n### Resource Group: ${rgName}\n`;
+        rgData.workspaces.forEach(ws => {
+            workspaceBreakdown += `- **${ws.name}**: ${ws.gb.toFixed(2)} GB (~$${(ws.gb * 2.76).toFixed(2)}/month)\n`;
+        });
+    }
 
     const userPrompt = `Analyze this Azure Monitor Log Analytics workspace data following the checklist above.
 
@@ -298,15 +314,18 @@ Be CONSISTENT - always check the same things, always provide the same recommenda
 - Estimated monthly cost: $${(dataSummary.totalIngestionGB * 2.76).toFixed(2)} (at Pay-As-You-Go $2.76/GB)
 - Workspaces analyzed: ${dataSummary.workspacesWithData}/${dataSummary.totalWorkspaces}
 
-## Top Tables by Volume
+## Workspaces Breakdown by Resource Group
+${workspaceBreakdown}
+
+## Top Tables by Volume (Combined)
 ${dataSummary.topTables.map(t => `- ${t.name}: ${t.gb.toFixed(2)} GB (${((t.gb/dataSummary.totalIngestionGB)*100).toFixed(1)}%)`).join('\n')}
 
-## Detailed Analysis Data
+## Detailed Analysis Data Per Workspace
 ${analysisData}
 
 ${userContext ? `## User Context\n${userContext}` : ''}
 
-Follow the checklist exactly. Be specific with numbers. Be consistent.`;
+IMPORTANT: When providing recommendations, ALWAYS specify which workspace the recommendation applies to. Follow the checklist exactly. Be specific with numbers. Be consistent.`;
 
     try {
         console.log('Calling Azure OpenAI API...');
@@ -1127,16 +1146,27 @@ function showRecommendations(recommendations, workspaces, dataSummary) {
     const totalGB = dataSummary.totalIngestionGB.toFixed(2);
     const monthlyCost = (dataSummary.totalIngestionGB * 2.76).toFixed(2);
     
-    // Build workspace list by RG
-    let wsDetails = '';
+    // Build detailed workspace summary by RG
+    let wsDetails = '<div class="workspace-summary">';
+    wsDetails += '<h4 style="margin: 12px 0 8px 0; color: #667;">Analyzed Workspaces:</h4>';
     for (const [rgName, rgData] of Object.entries(dataSummary.byResourceGroup)) {
-        const wsNames = rgData.workspaces.map(w => w.name).join(', ');
-        wsDetails += `<div class="info-item"><span class="label">${rgName}:</span> <span class="value">${wsNames}</span></div>`;
+        wsDetails += `<div class="rg-group" style="margin-bottom: 8px;">`;
+        wsDetails += `<div style="font-weight: 600; color: #5e5e5e;">📁 ${rgName}</div>`;
+        wsDetails += `<div style="margin-left: 20px;">`;
+        rgData.workspaces.forEach(ws => {
+            const wsCost = (ws.gb * 2.76).toFixed(2);
+            wsDetails += `<div class="ws-detail" style="display: flex; justify-content: space-between; padding: 2px 0;">`;
+            wsDetails += `<span>• ${ws.name}</span>`;
+            wsDetails += `<span style="color: #666;">${ws.gb.toFixed(2)} GB (~$${wsCost})</span>`;
+            wsDetails += `</div>`;
+        });
+        wsDetails += `</div></div>`;
     }
+    wsDetails += '</div>';
     
     resourceInfo.innerHTML = `
-        <div class="info-item"><span class="label">Total Ingestion:</span> <span class="value">${totalGB} GB/month (~$${monthlyCost})</span></div>
-        <div class="info-item"><span class="label">Workspaces:</span> <span class="value">${dataSummary.workspacesWithData} analyzed</span></div>
+        <div class="info-item"><span class="label">📊 Total Ingestion:</span> <span class="value" style="font-size: 1.1em; font-weight: 600;">${totalGB} GB/month (~$${monthlyCost})</span></div>
+        <div class="info-item"><span class="label">🔍 Workspaces Analyzed:</span> <span class="value">${dataSummary.workspacesWithData} of ${dataSummary.totalWorkspaces}</span></div>
         ${wsDetails}
     `;
     
