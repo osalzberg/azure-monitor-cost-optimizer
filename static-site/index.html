@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure Monitor Cost Optimizer</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- MSAL.js for Azure AD authentication -->
+    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div class="logo">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                        <path d="M2 17l10 5 10-5"></path>
+                        <path d="M2 12l10 5 10-5"></path>
+                    </svg>
+                    <h1>Azure Monitor Cost Optimizer</h1>
+                </div>
+                <div class="auth-section">
+                    <div class="status-badge">
+                        <span class="status-indicator disconnected" id="statusIndicator"></span>
+                        <span id="statusText">Not signed in</span>
+                    </div>
+                    <button id="signInBtn" class="auth-btn" onclick="signIn()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                            <polyline points="10 17 15 12 10 7"></polyline>
+                            <line x1="15" y1="12" x2="3" y2="12"></line>
+                        </svg>
+                        Sign In
+                    </button>
+                    <button id="signOutBtn" class="auth-btn" onclick="signOut()" hidden>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                            <polyline points="16 17 21 12 16 7"></polyline>
+                            <line x1="21" y1="12" x2="9" y2="12"></line>
+                        </svg>
+                        Sign Out
+                    </button>
+                </div>
+            </div>
+            <p class="subtitle">Analyze your Log Analytics workspaces and get AI-powered cost optimization recommendations</p>
+        </header>
+
+        <!-- Not Signed In -->
+        <section id="welcomeSection" class="card">
+            <div class="welcome-content">
+                <h2>👋 Welcome!</h2>
+                <p>Sign in with your Microsoft account to analyze your Azure Log Analytics workspaces.</p>
+                <ul class="features-list">
+                    <li>🔒 Your credentials stay in your browser - no server involved</li>
+                    <li>👤 You'll only see resources you have access to</li>
+                    <li>📊 Get detailed cost analysis and optimization recommendations</li>
+                </ul>
+                <button class="primary-btn" onclick="signIn()">
+                    <img src="https://docs.microsoft.com/en-us/azure/active-directory/develop/media/howto-add-branding-in-azure-ad-apps/ms-symbollockup_mssymbol_19.svg" alt="Microsoft" width="20" height="20">
+                    Sign in with Microsoft
+                </button>
+            </div>
+        </section>
+
+        <!-- Main App (hidden until signed in) -->
+        <section id="mainApp" class="card" hidden>
+            <h2>📊 Analyze Workspaces</h2>
+            
+            <!-- Subscription Selection -->
+            <div class="form-group">
+                <label for="subscriptionFilter">Filter Subscriptions</label>
+                <input type="text" id="subscriptionFilter" placeholder="Type to filter..." oninput="filterSubscriptions(this.value)">
+            </div>
+            
+            <div class="form-group">
+                <label for="subscriptionSelect">Select Subscription</label>
+                <select id="subscriptionSelect" onchange="loadWorkspaces(this.value)">
+                    <option value="">Select a subscription...</option>
+                </select>
+            </div>
+
+            <!-- Workspace Selection -->
+            <div class="form-group">
+                <label>Select Workspaces</label>
+                <div class="workspace-controls">
+                    <button type="button" class="control-btn" onclick="selectAllWorkspaces()">Select All</button>
+                    <button type="button" class="control-btn" onclick="deselectAllWorkspaces()">Deselect All</button>
+                    <input type="text" id="workspaceFilter" placeholder="Filter workspaces..." oninput="filterWorkspaces(this.value)">
+                </div>
+                <div id="workspaceList" class="workspace-list">
+                    <div class="workspace-placeholder">Select a subscription to see workspaces</div>
+                </div>
+            </div>
+
+            <!-- OpenAI Settings (Optional) -->
+            <details class="ai-settings">
+                <summary>🤖 AI Recommendations (Optional)</summary>
+                <div class="ai-settings-content">
+                    <p>Provide your OpenAI API key to get AI-powered recommendations. Without it, you'll still see all the data analysis.</p>
+                    <div class="form-group">
+                        <label for="openaiKey">OpenAI API Key</label>
+                        <input type="password" id="openaiKey" placeholder="sk-...">
+                    </div>
+                    <div class="form-group">
+                        <label for="openaiEndpoint">Azure OpenAI Endpoint (optional)</label>
+                        <input type="text" id="openaiEndpoint" placeholder="https://your-resource.openai.azure.com">
+                    </div>
+                </div>
+            </details>
+
+            <!-- Analyze Button -->
+            <button id="analyzeBtn" class="primary-btn" onclick="runAnalysis()" disabled>
+                Analyze Selected Workspaces
+            </button>
+        </section>
+
+        <!-- Progress Section -->
+        <section id="progressSection" class="card" hidden>
+            <h2>🔄 Analyzing...</h2>
+            <div class="progress-list">
+                <div class="progress-item" id="progressAuth">
+                    <span class="progress-status">⏳</span>
+                    <span class="progress-label">Authenticating</span>
+                </div>
+                <div class="progress-item" id="progressQueries">
+                    <span class="progress-status">⏳</span>
+                    <span class="progress-label">Running queries</span>
+                </div>
+                <div class="progress-item" id="progressAnalysis">
+                    <span class="progress-status">⏳</span>
+                    <span class="progress-label">Analyzing data</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Results Section -->
+        <section id="resultsSection" class="card" hidden>
+            <div class="results-header">
+                <h2>📈 Analysis Results</h2>
+                <div class="results-actions">
+                    <button class="action-btn" onclick="copyResults()">📋 Copy</button>
+                    <button class="action-btn" onclick="exportResults()">💾 Export</button>
+                    <button class="action-btn" onclick="newAnalysis()">🔄 New Analysis</button>
+                </div>
+            </div>
+            <div id="resultsContent"></div>
+        </section>
+
+        <!-- Error Section -->
+        <section id="errorSection" class="card error-card" hidden>
+            <h2>❌ Error</h2>
+            <p id="errorMessage"></p>
+            <div id="errorHelp"></div>
+            <button class="primary-btn" onclick="dismissError()">Dismiss</button>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
