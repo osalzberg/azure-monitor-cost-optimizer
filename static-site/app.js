@@ -141,6 +141,175 @@ function signOut() {
     location.reload();
 }
 
+// AI Settings Management
+function getAISettings() {
+    const saved = localStorage.getItem('aiSettings');
+    if (saved) {
+        try {
+            return JSON.parse(saved);
+        } catch (e) {
+            return {};
+        }
+    }
+    return {};
+}
+
+function saveAISettings() {
+    const endpoint = document.getElementById('openaiEndpoint').value.trim();
+    const key = document.getElementById('openaiKey').value.trim();
+    const deployment = document.getElementById('openaiDeployment').value.trim() || 'gpt-4';
+    
+    localStorage.setItem('aiSettings', JSON.stringify({ endpoint, key, deployment }));
+    
+    // Update UI
+    const btn = document.querySelector('.save-settings-btn');
+    btn.textContent = '✅ Saved!';
+    setTimeout(() => btn.textContent = '💾 Save Settings', 2000);
+    
+    updateAIStatus();
+}
+
+function loadAISettings() {
+    const settings = getAISettings();
+    if (settings.endpoint) document.getElementById('openaiEndpoint').value = settings.endpoint;
+    if (settings.key) document.getElementById('openaiKey').value = settings.key;
+    if (settings.deployment) document.getElementById('openaiDeployment').value = settings.deployment;
+    updateAIStatus();
+}
+
+function updateAIStatus() {
+    const settings = getAISettings();
+    const summary = document.querySelector('.ai-settings summary');
+    
+    // Remove existing status
+    const existing = summary.querySelector('.ai-status');
+    if (existing) existing.remove();
+    
+    // Add new status
+    const status = document.createElement('span');
+    if (settings.endpoint && settings.key) {
+        status.className = 'ai-status configured';
+        status.textContent = '✓ Configured';
+    } else {
+        status.className = 'ai-status not-configured';
+        status.textContent = 'Not configured';
+    }
+    summary.appendChild(status);
+}
+
+// Azure OpenAI API call
+async function getAIRecommendations(allQueryData, dataSummary, aiSettings, userContext) {
+    const { endpoint, key, deployment } = aiSettings;
+    
+    // Format query data for AI
+    const analysisData = formatQueryDataForAI(allQueryData, dataSummary);
+    
+    const systemPrompt = `You are an Azure Monitor cost optimization expert. Analyze the provided Log Analytics workspace data and provide specific, actionable cost optimization recommendations.
+
+Format your response using these card markers for structured output:
+[CARD:type] where type is: warning, savings, info, success
+[TITLE]Card Title[/TITLE]
+[IMPACT]Potential savings or impact[/IMPACT]
+[ACTION]Specific action to take[/ACTION]
+[DOCS]Link to relevant documentation[/DOCS]
+[/CARD]
+
+For KQL queries, use [KQL]query here[/KQL]
+
+Focus on:
+1. Commitment tier opportunities (if daily ingestion > 100GB)
+2. Basic Logs for debug/verbose tables (ContainerLogV2, AppTraces, etc.)
+3. Data retention optimization
+4. DCR filtering to reduce ingestion
+5. Identifying tables that could be sampled or filtered
+
+Be specific with numbers and potential savings estimates.`;
+
+    const userPrompt = `Analyze this Azure Monitor Log Analytics data and provide cost optimization recommendations:
+
+## Data Summary
+- Total 30-day ingestion: ${dataSummary.totalIngestionGB.toFixed(2)} GB
+- Daily average: ${(dataSummary.totalIngestionGB / 30).toFixed(2)} GB/day
+- Workspaces analyzed: ${dataSummary.workspacesWithData}/${dataSummary.totalWorkspaces}
+
+## Detailed Analysis Data
+${analysisData}
+
+${userContext ? `## User Context\n${userContext}` : ''}
+
+Provide specific, actionable recommendations with estimated cost savings where possible.`;
+
+    try {
+        const response = await fetch(`${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=2024-02-01`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'api-key': key
+            },
+            body: JSON.stringify({
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                max_tokens: 4000,
+                temperature: 0.7
+            })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error?.message || `HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        return data.choices[0].message.content;
+        
+    } catch (error) {
+        console.error('AI API error:', error);
+        // Fallback to rule-based if AI fails
+        return generateRecommendations(allQueryData, dataSummary) + 
+            `\n\n[CARD:warning][TITLE]⚠️ AI Analysis Unavailable[/TITLE]AI-powered analysis failed: ${error.message}. Showing rule-based recommendations instead.[/CARD]`;
+    }
+}
+
+// Format query data for AI consumption
+function formatQueryDataForAI(allQueryData, dataSummary) {
+    let formatted = '';
+    
+    // Top tables summary
+    if (dataSummary.topTables.length > 0) {
+        formatted += '### Top Data Tables (30-day volume)\n';
+        formatted += '| Table | Volume (GB) | % of Total |\n|-------|-------------|------------|\n';
+        dataSummary.topTables.forEach(t => {
+            const pct = ((t.gb / dataSummary.totalIngestionGB) * 100).toFixed(1);
+            formatted += `| ${t.name} | ${t.gb.toFixed(2)} | ${pct}% |\n`;
+        });
+        formatted += '\n';
+    }
+    
+    // Per-workspace details
+    for (const [wsName, queryResults] of Object.entries(allQueryData)) {
+        const ws = currentWorkspaces.find(w => w.name === wsName);
+        formatted += `### Workspace: ${wsName}\n`;
+        formatted += `- Resource Group: ${ws?.resourceGroup || 'Unknown'}\n`;
+        formatted += `- SKU: ${ws?.sku || 'Unknown'}\n`;
+        formatted += `- Retention: ${ws?.retentionDays || 30} days\n\n`;
+        
+        // Data volume
+        if (queryResults.dataVolumeByTable?.rows?.length > 0) {
+            formatted += '**Top Tables:**\n';
+            const gbIdx = queryResults.dataVolumeByTable.columns?.indexOf('BillableGB') ?? 1;
+            const typeIdx = queryResults.dataVolumeByTable.columns?.indexOf('DataType') ?? 0;
+            queryResults.dataVolumeByTable.rows.slice(0, 10).forEach(row => {
+                formatted += `- ${row[typeIdx]}: ${parseFloat(row[gbIdx]).toFixed(2)} GB\n`;
+            });
+            formatted += '\n';
+        }
+    }
+    
+    return formatted;
+}
+
 // Called when user is signed in
 function onSignedIn(username) {
     document.getElementById('statusIndicator').className = 'status-indicator connected';
@@ -149,6 +318,9 @@ function onSignedIn(username) {
     
     authRequiredSection.hidden = true;
     inputSection.hidden = false;
+    
+    // Load AI settings
+    loadAISettings();
     
     loadSubscriptions();
 }
@@ -522,10 +694,21 @@ async function runAnalysis() {
             return;
         }
         
-        // Generate recommendations (without AI for static site)
-        updateProgress('progressAI', 'running', 'Generating recommendations...');
+        // Check if AI is configured
+        const aiSettings = getAISettings();
+        let recommendations;
         
-        const recommendations = generateRecommendations(allQueryData, dataSummary);
+        if (aiSettings.endpoint && aiSettings.key) {
+            // Use Azure OpenAI
+            updateProgress('progressAI', 'running', 'Generating AI recommendations...');
+            const context = document.getElementById('context').value;
+            recommendations = await getAIRecommendations(allQueryData, dataSummary, aiSettings, context);
+        } else {
+            // Fallback to rule-based recommendations
+            updateProgress('progressAI', 'running', 'Generating recommendations...');
+            recommendations = generateRecommendations(allQueryData, dataSummary);
+        }
+        
         updateProgress('progressAI', 'complete', 'Recommendations generated');
         
         // Show recommendations
