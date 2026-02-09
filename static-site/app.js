@@ -7,7 +7,7 @@ let allSubscriptions = [];
 let currentWorkspaces = [];
 let selectedWorkspaces = [];
 
-// KQL Queries for cost analysis
+// KQL Queries for cost analysis - following aka.ms/costopt best practices
 const analysisQueries = {
     dataVolumeByTable: `
         Usage
@@ -24,12 +24,42 @@ const analysisQueries = {
         | summarize DailyGB = sum(Quantity) / 1000 by bin(TimeGenerated, 1d)
         | order by TimeGenerated asc
     `,
-    dataByComputer: `
+    // Check heartbeat frequency - should be ~60/hour (1/min), flag if higher
+    heartbeatFrequency: `
         Heartbeat
-        | where TimeGenerated > ago(7d)
-        | summarize LastHeartbeat = max(TimeGenerated) by Computer, OSType
-        | order by LastHeartbeat desc
-        | take 20
+        | where TimeGenerated > ago(1h)
+        | summarize HeartbeatsPerHour = count() by Computer
+        | summarize AvgHeartbeatsPerHour = avg(HeartbeatsPerHour), 
+                    MaxHeartbeatsPerHour = max(HeartbeatsPerHour),
+                    ComputerCount = count()
+    `,
+    // Check for computers with excessive heartbeats
+    excessiveHeartbeats: `
+        Heartbeat
+        | where TimeGenerated > ago(1h)
+        | summarize HeartbeatsPerHour = count() by Computer
+        | where HeartbeatsPerHour > 70
+        | order by HeartbeatsPerHour desc
+        | take 10
+    `,
+    // Check Perf counter frequency
+    perfCounterFrequency: `
+        Perf
+        | where TimeGenerated > ago(1h)
+        | summarize SamplesPerHour = count() by Computer, CounterName
+        | summarize AvgSamplesPerHour = avg(SamplesPerHour) by CounterName
+        | where AvgSamplesPerHour > 100
+        | order by AvgSamplesPerHour desc
+        | take 10
+    `,
+    // Check for Basic Logs candidates
+    basicLogsCandidates: `
+        Usage
+        | where TimeGenerated > ago(30d)
+        | where IsBillable == true
+        | where DataType in ('ContainerLog', 'ContainerLogV2', 'AppTraces', 'AppDependencies', 'Syslog', 'AzureDiagnostics')
+        | summarize BillableGB = sum(Quantity) / 1000 by DataType
+        | order by BillableGB desc
     `,
     topTables: `
         Usage
@@ -206,40 +236,77 @@ async function getAIRecommendations(allQueryData, dataSummary, aiSettings, userC
     // Format query data for AI
     const analysisData = formatQueryDataForAI(allQueryData, dataSummary);
     
-    const systemPrompt = `You are an Azure Monitor cost optimization expert. Analyze the provided Log Analytics workspace data and provide specific, actionable cost optimization recommendations.
+    const systemPrompt = `You are an Azure Monitor cost optimization expert following Microsoft's official guidance at aka.ms/costopt.
 
-Format your response using these card markers for structured output:
-[CARD:type] where type is: warning, savings, info, success
-[TITLE]Card Title[/TITLE]
-[IMPACT]Potential savings or impact[/IMPACT]
-[ACTION]Specific action to take[/ACTION]
-[DOCS]Link to relevant documentation[/DOCS]
+ALWAYS analyze and report on ALL of these areas in order:
+
+## 1. COMMITMENT TIER ANALYSIS (REQUIRED)
+- If daily ingestion >= 100 GB/day: RECOMMEND commitment tier (saves ~17-30%)
+- If 50-99 GB/day: Monitor and plan for commitment tier
+- If < 50 GB/day: Pay-as-you-go is optimal
+- Calculate exact savings: (daily_gb * 30 * $2.76) vs commitment tier price
+
+## 2. BASIC LOGS CANDIDATES (REQUIRED)
+Check these tables for Basic Logs conversion (50% savings):
+- ContainerLogV2, ContainerLog
+- AppTraces, AppDependencies  
+- AzureDiagnostics (verbose resources)
+- Syslog (non-security)
+- Custom logs used for debugging
+If any of these tables appear in the data, recommend Basic Logs.
+
+## 3. DATA COLLECTION OPTIMIZATION (REQUIRED)
+- Heartbeat frequency: If Heartbeat table exists, check if computers send >60 heartbeats/hour (default is 1/min = 60/hour). Recommend reducing to 5-min intervals if appropriate.
+- Performance counters: Check Perf table - recommend reducing collection frequency from 10s to 60s for non-critical counters
+- Container Insights: If ContainerLog* tables exist, recommend filtering stdout/stderr, excluding namespaces
+- Duplicate collection: Flag if same data appears from multiple sources
+
+## 4. RETENTION OPTIMIZATION (REQUIRED)
+- Recommend 30-day interactive retention for high-volume tables
+- Recommend archive tier for data needed >90 days
+- Security tables may need longer retention (compliance)
+
+## 5. TABLE-SPECIFIC RECOMMENDATIONS (REQUIRED)
+For EACH top table by volume, provide specific recommendations.
+
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+
+[CARD:info]
+[TITLE]📊 Data Overview[/TITLE]
+[IMPACT]Total: X GB/month, ~$Y/month[/IMPACT]
+Summary of findings in 2-3 sentences.
 [/CARD]
 
-For KQL queries, use [KQL]query here[/KQL]
+Then for each finding use:
+[CARD:savings] for cost saving opportunities
+[CARD:warning] for issues found
+[CARD:success] for things already optimized
+[CARD:info] for informational items
 
-Focus on:
-1. Commitment tier opportunities (if daily ingestion > 100GB)
-2. Basic Logs for debug/verbose tables (ContainerLogV2, AppTraces, etc.)
-3. Data retention optimization
-4. DCR filtering to reduce ingestion
-5. Identifying tables that could be sampled or filtered
+Each card must have [TITLE], [IMPACT] (with $ amount or % savings), and [ACTION] with specific steps.
+Include [DOCS] with relevant Microsoft docs link.
 
-Be specific with numbers and potential savings estimates.`;
+End with a [CARD:info] summary card listing top 3 actions by impact.
 
-    const userPrompt = `Analyze this Azure Monitor Log Analytics data and provide cost optimization recommendations:
+Be CONSISTENT - always check the same things, always provide the same recommendations for the same data patterns.`;
+
+    const userPrompt = `Analyze this Azure Monitor Log Analytics workspace data following the checklist above.
 
 ## Data Summary
 - Total 30-day ingestion: ${dataSummary.totalIngestionGB.toFixed(2)} GB
-- Daily average: ${(dataSummary.totalIngestionGB / 30).toFixed(2)} GB/day
+- Daily average: ${(dataSummary.totalIngestionGB / 30).toFixed(2)} GB/day  
+- Estimated monthly cost: $${(dataSummary.totalIngestionGB * 2.76).toFixed(2)} (at Pay-As-You-Go $2.76/GB)
 - Workspaces analyzed: ${dataSummary.workspacesWithData}/${dataSummary.totalWorkspaces}
+
+## Top Tables by Volume
+${dataSummary.topTables.map(t => `- ${t.name}: ${t.gb.toFixed(2)} GB (${((t.gb/dataSummary.totalIngestionGB)*100).toFixed(1)}%)`).join('\n')}
 
 ## Detailed Analysis Data
 ${analysisData}
 
 ${userContext ? `## User Context\n${userContext}` : ''}
 
-Provide specific, actionable recommendations with estimated cost savings where possible.`;
+Follow the checklist exactly. Be specific with numbers. Be consistent.`;
 
     try {
         console.log('Calling Azure OpenAI API...');
@@ -258,7 +325,7 @@ Provide specific, actionable recommendations with estimated cost savings where p
                     { role: 'user', content: userPrompt }
                 ],
                 max_tokens: 4000,
-                temperature: 0.7
+                temperature: 0.2  // Low temperature for consistent results
             })
         });
         
@@ -311,6 +378,52 @@ function formatQueryDataForAI(allQueryData, dataSummary) {
             const typeIdx = queryResults.dataVolumeByTable.columns?.indexOf('DataType') ?? 0;
             queryResults.dataVolumeByTable.rows.slice(0, 10).forEach(row => {
                 formatted += `- ${row[typeIdx]}: ${parseFloat(row[gbIdx]).toFixed(2)} GB\n`;
+            });
+            formatted += '\n';
+        }
+        
+        // Heartbeat frequency analysis
+        if (queryResults.heartbeatFrequency?.rows?.length > 0) {
+            const row = queryResults.heartbeatFrequency.rows[0];
+            const avgIdx = queryResults.heartbeatFrequency.columns?.indexOf('AvgHeartbeatsPerHour') ?? 0;
+            const maxIdx = queryResults.heartbeatFrequency.columns?.indexOf('MaxHeartbeatsPerHour') ?? 1;
+            const countIdx = queryResults.heartbeatFrequency.columns?.indexOf('ComputerCount') ?? 2;
+            formatted += `**Heartbeat Frequency:**\n`;
+            formatted += `- Average: ${parseFloat(row[avgIdx]).toFixed(1)} heartbeats/hour/computer\n`;
+            formatted += `- Max: ${parseFloat(row[maxIdx]).toFixed(0)} heartbeats/hour\n`;
+            formatted += `- Computers monitored: ${row[countIdx]}\n`;
+            formatted += `- Expected: 60/hour (1/min default)\n\n`;
+        }
+        
+        // Excessive heartbeats
+        if (queryResults.excessiveHeartbeats?.rows?.length > 0) {
+            formatted += `**⚠️ Computers with Excessive Heartbeats (>70/hour):**\n`;
+            const compIdx = queryResults.excessiveHeartbeats.columns?.indexOf('Computer') ?? 0;
+            const hbIdx = queryResults.excessiveHeartbeats.columns?.indexOf('HeartbeatsPerHour') ?? 1;
+            queryResults.excessiveHeartbeats.rows.forEach(row => {
+                formatted += `- ${row[compIdx]}: ${row[hbIdx]} heartbeats/hour\n`;
+            });
+            formatted += '\n';
+        }
+        
+        // High-frequency Perf counters
+        if (queryResults.perfCounterFrequency?.rows?.length > 0) {
+            formatted += `**High-Frequency Performance Counters (>100 samples/hour):**\n`;
+            const counterIdx = queryResults.perfCounterFrequency.columns?.indexOf('CounterName') ?? 0;
+            const samplesIdx = queryResults.perfCounterFrequency.columns?.indexOf('AvgSamplesPerHour') ?? 1;
+            queryResults.perfCounterFrequency.rows.forEach(row => {
+                formatted += `- ${row[counterIdx]}: ${parseFloat(row[samplesIdx]).toFixed(0)} samples/hour\n`;
+            });
+            formatted += '\n';
+        }
+        
+        // Basic Logs candidates
+        if (queryResults.basicLogsCandidates?.rows?.length > 0) {
+            formatted += `**Basic Logs Candidates Found:**\n`;
+            const typeIdx = queryResults.basicLogsCandidates.columns?.indexOf('DataType') ?? 0;
+            const gbIdx = queryResults.basicLogsCandidates.columns?.indexOf('BillableGB') ?? 1;
+            queryResults.basicLogsCandidates.rows.forEach(row => {
+                formatted += `- ${row[typeIdx]}: ${parseFloat(row[gbIdx]).toFixed(2)} GB (could save ~50%)\n`;
             });
             formatted += '\n';
         }
