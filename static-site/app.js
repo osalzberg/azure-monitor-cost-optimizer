@@ -1,26 +1,13 @@
 // Azure Monitor Cost Optimizer - Static Site Version
-// All authentication happens client-side using MSAL.js
+// Uses Device Code Flow for authentication (no redirect URIs needed)
 
-// MSAL Configuration
-// Using a well-known public client ID that doesn't require admin consent
-// This is Microsoft's "Azure CLI" client ID which has pre-consented permissions
-const msalConfig = {
-    auth: {
-        clientId: '04b07795-8ddb-461a-bbee-02f9e1bf7b46', // Azure CLI public client ID
-        authority: 'https://login.microsoftonline.com/organizations',
-        redirectUri: window.location.origin + window.location.pathname,
-    },
-    cache: {
-        cacheLocation: 'localStorage',
-        storeAuthStateInCookie: false,
-    }
-};
-
-// Initialize MSAL
-let msalInstance = null;
-let currentAccount = null;
+// Azure AD Configuration
+// Using a well-known public client ID
+const CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'; // Azure CLI public client ID
+const TENANT = 'organizations'; // Multi-tenant
 
 // App state
+let accessToken = null;
 let allSubscriptions = [];
 let currentWorkspaces = [];
 let selectedWorkspaces = [];
@@ -57,109 +44,212 @@ const analysisQueries = {
 };
 
 // Initialize on page load
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        msalInstance = new msal.PublicClientApplication(msalConfig);
-        await msalInstance.initialize();
-        
-        // Handle redirect response
-        const response = await msalInstance.handleRedirectPromise();
-        if (response) {
-            currentAccount = response.account;
-            onSignedIn();
-        } else {
-            // Check if already signed in
-            const accounts = msalInstance.getAllAccounts();
-            if (accounts.length > 0) {
-                currentAccount = accounts[0];
-                onSignedIn();
+document.addEventListener('DOMContentLoaded', () => {
+    // Check for saved token
+    const saved = localStorage.getItem('azureToken');
+    if (saved) {
+        try {
+            const data = JSON.parse(saved);
+            if (data.expiresAt > Date.now()) {
+                accessToken = data.token;
+                onSignedIn(data.username);
+            } else {
+                localStorage.removeItem('azureToken');
             }
+        } catch (e) {
+            localStorage.removeItem('azureToken');
         }
-    } catch (error) {
-        console.error('MSAL initialization error:', error);
-        showError('Failed to initialize authentication', error.message);
     }
 });
 
-// Sign In
+// Sign In using Device Code Flow
 async function signIn() {
+    const btn = document.getElementById('signInBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Starting sign in...';
+    
     try {
-        updateStatus('checking', 'Signing in...');
-        
-        // Use popup for better UX, fallback to redirect
-        const loginRequest = {
-            scopes: ['https://management.azure.com/user_impersonation'],
-            prompt: 'select_account'
-        };
-        
-        try {
-            const response = await msalInstance.loginPopup(loginRequest);
-            currentAccount = response.account;
-            onSignedIn();
-        } catch (popupError) {
-            // If popup blocked, try redirect
-            if (popupError.errorCode === 'popup_window_error') {
-                await msalInstance.loginRedirect(loginRequest);
-            } else {
-                throw popupError;
+        // Step 1: Get device code
+        const deviceCodeResponse = await fetch(
+            `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/devicecode`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    client_id: CLIENT_ID,
+                    scope: 'https://management.azure.com/user_impersonation https://api.loganalytics.io/Data.Read offline_access'
+                })
             }
+        );
+        
+        if (!deviceCodeResponse.ok) {
+            throw new Error('Failed to get device code');
         }
+        
+        const deviceCode = await deviceCodeResponse.json();
+        
+        // Show device code UI
+        showDeviceCodeUI(deviceCode);
+        
+        // Step 2: Poll for token
+        await pollForToken(deviceCode);
+        
     } catch (error) {
         console.error('Sign in error:', error);
-        updateStatus('disconnected', 'Sign in failed');
+        showError('Sign in failed', error.message);
+        btn.disabled = false;
+        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+            <polyline points="10 17 15 12 10 7"></polyline>
+            <line x1="15" y1="12" x2="3" y2="12"></line>
+        </svg> Sign In`;
+    }
+}
+
+// Show device code UI
+function showDeviceCodeUI(deviceCode) {
+    document.getElementById('welcomeSection').innerHTML = `
+        <div class="device-code-container">
+            <h2>🔐 Sign In Required</h2>
+            <p>To authenticate with your Microsoft account:</p>
+            
+            <div class="device-code-steps">
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <span>Go to <a href="${deviceCode.verification_uri}" target="_blank" class="device-link">${deviceCode.verification_uri}</a></span>
+                </div>
+                <div class="step">
+                    <span class="step-number">2</span>
+                    <span>Enter this code:</span>
+                </div>
+            </div>
+            
+            <div class="device-code-display">
+                <code id="userCode">${deviceCode.user_code}</code>
+                <button class="copy-btn" onclick="copyCode()">📋 Copy</button>
+            </div>
+            
+            <p class="waiting-message">
+                <span class="spinner"></span>
+                Waiting for you to complete sign in...
+            </p>
+            
+            <button class="cancel-btn" onclick="cancelSignIn()">Cancel</button>
+        </div>
+    `;
+}
+
+// Copy code to clipboard
+function copyCode() {
+    const code = document.getElementById('userCode').textContent;
+    navigator.clipboard.writeText(code);
+    const btn = document.querySelector('.copy-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => btn.textContent = '📋 Copy', 2000);
+}
+
+// Poll for token
+let pollController = null;
+
+async function pollForToken(deviceCode) {
+    const interval = deviceCode.interval * 1000 || 5000;
+    const expiresAt = Date.now() + (deviceCode.expires_in * 1000);
+    
+    pollController = new AbortController();
+    
+    while (Date.now() < expiresAt) {
+        if (pollController.signal.aborted) {
+            throw new Error('Sign in cancelled');
+        }
         
-        // Check for admin consent error
-        if (error.errorCode === 'consent_required' || 
-            error.errorMessage?.includes('AADSTS65001') ||
-            error.errorMessage?.includes('admin')) {
-            showAdminConsentError();
-        } else {
-            showError('Sign in failed', error.message);
+        await new Promise(resolve => setTimeout(resolve, interval));
+        
+        try {
+            const tokenResponse = await fetch(
+                `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+                        client_id: CLIENT_ID,
+                        device_code: deviceCode.device_code
+                    })
+                }
+            );
+            
+            const tokenData = await tokenResponse.json();
+            
+            if (tokenData.access_token) {
+                // Success!
+                accessToken = tokenData.access_token;
+                
+                // Decode token to get username
+                const payload = JSON.parse(atob(tokenData.access_token.split('.')[1]));
+                const username = payload.upn || payload.preferred_username || payload.email || 'User';
+                
+                // Save token
+                localStorage.setItem('azureToken', JSON.stringify({
+                    token: tokenData.access_token,
+                    username: username,
+                    expiresAt: Date.now() + (tokenData.expires_in * 1000)
+                }));
+                
+                onSignedIn(username);
+                return;
+            } else if (tokenData.error === 'authorization_pending') {
+                // Still waiting, continue polling
+                continue;
+            } else if (tokenData.error === 'authorization_declined') {
+                throw new Error('Sign in was declined');
+            } else if (tokenData.error === 'expired_token') {
+                throw new Error('Sign in code expired');
+            } else if (tokenData.error) {
+                // Check for admin consent required
+                if (tokenData.error_description?.includes('AADSTS65001') || 
+                    tokenData.error_description?.includes('admin')) {
+                    showAdminConsentError();
+                    return;
+                }
+                throw new Error(tokenData.error_description || tokenData.error);
+            }
+        } catch (e) {
+            if (e.message !== 'Sign in cancelled') {
+                console.error('Token poll error:', e);
+            }
+            throw e;
         }
     }
+    
+    throw new Error('Sign in timed out');
+}
+
+// Cancel sign in
+function cancelSignIn() {
+    if (pollController) {
+        pollController.abort();
+    }
+    location.reload();
 }
 
 // Sign Out
 function signOut() {
-    msalInstance.logoutPopup({
-        account: currentAccount,
-        postLogoutRedirectUri: window.location.origin + window.location.pathname
-    });
-    currentAccount = null;
-    updateStatus('disconnected', 'Not signed in');
-    document.getElementById('welcomeSection').hidden = false;
-    document.getElementById('mainApp').hidden = true;
-    document.getElementById('signInBtn').hidden = false;
-    document.getElementById('signOutBtn').hidden = true;
+    accessToken = null;
+    localStorage.removeItem('azureToken');
+    location.reload();
 }
 
 // Called when user is signed in
-function onSignedIn() {
-    updateStatus('connected', currentAccount.username);
+function onSignedIn(username) {
+    updateStatus('connected', username);
+    
+    // Reset welcome section
     document.getElementById('welcomeSection').hidden = true;
     document.getElementById('mainApp').hidden = false;
     document.getElementById('signInBtn').hidden = true;
     document.getElementById('signOutBtn').hidden = false;
-    loadSubscriptions();
-}
-
-// Get access token
-async function getAccessToken(scopes) {
-    const tokenRequest = {
-        scopes: scopes,
-        account: currentAccount
-    };
     
-    try {
-        const response = await msalInstance.acquireTokenSilent(tokenRequest);
-        return response.accessToken;
-    } catch (error) {
-        if (error instanceof msal.InteractionRequiredAuthError) {
-            const response = await msalInstance.acquireTokenPopup(tokenRequest);
-            return response.accessToken;
-        }
-        throw error;
-    }
+    loadSubscriptions();
 }
 
 // Update status indicator
@@ -177,13 +267,15 @@ async function loadSubscriptions() {
     select.disabled = true;
     
     try {
-        const token = await getAccessToken(['https://management.azure.com/user_impersonation']);
-        
         const response = await fetch('https://management.azure.com/subscriptions?api-version=2022-01-01', {
-            headers: { 'Authorization': `Bearer ${token}` }
+            headers: { 'Authorization': `Bearer ${accessToken}` }
         });
         
         if (!response.ok) {
+            if (response.status === 401) {
+                signOut();
+                return;
+            }
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
@@ -238,11 +330,9 @@ async function loadWorkspaces(subscriptionId) {
         '<div class="workspace-placeholder">Loading workspaces...</div>';
     
     try {
-        const token = await getAccessToken(['https://management.azure.com/user_impersonation']);
-        
         const response = await fetch(
             `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.OperationalInsights/workspaces?api-version=2021-12-01-preview`,
-            { headers: { 'Authorization': `Bearer ${token}` } }
+            { headers: { 'Authorization': `Bearer ${accessToken}` } }
         );
         
         if (!response.ok) {
@@ -390,15 +480,13 @@ async function runAnalysis() {
     document.getElementById('resultsSection').hidden = true;
     
     try {
-        updateProgress('progressAuth', 'running', 'Getting access token...');
-        const token = await getAccessToken(['https://api.loganalytics.io/Data.Read']);
         updateProgress('progressAuth', 'complete', 'Authenticated');
         
         updateProgress('progressQueries', 'running', 'Running queries...');
         
         const allResults = {};
         for (const ws of workspaces) {
-            allResults[ws.name] = await queryWorkspace(ws.id, token);
+            allResults[ws.name] = await queryWorkspace(ws.id, accessToken);
         }
         
         updateProgress('progressQueries', 'complete', `Queried ${workspaces.length} workspace(s)`);

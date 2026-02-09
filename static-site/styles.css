@@ -530,6 +530,120 @@ header h1 {
     font-size: 0.9rem;
 }
 
+/* Device Code Flow UI */
+.device-code-container {
+    text-align: center;
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+.device-code-container h2 {
+    margin-bottom: 15px;
+}
+
+.device-code-steps {
+    text-align: left;
+    margin: 25px 0;
+}
+
+.device-code-steps .step {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 10px;
+    background: var(--neutral-light);
+    border-radius: 8px;
+}
+
+.step-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: var(--azure-blue);
+    color: white;
+    border-radius: 50%;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.device-link {
+    color: var(--azure-blue);
+    font-weight: 500;
+}
+
+.device-code-display {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    margin: 25px 0;
+    padding: 20px;
+    background: var(--neutral-light);
+    border-radius: 12px;
+}
+
+.device-code-display code {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: 4px;
+    color: var(--azure-dark);
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.copy-btn {
+    padding: 10px 15px;
+    background: var(--azure-blue);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.copy-btn:hover {
+    background: var(--azure-dark);
+}
+
+.waiting-message {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: #666;
+    margin: 20px 0;
+}
+
+.spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid var(--neutral-light);
+    border-top-color: var(--azure-blue);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.cancel-btn {
+    padding: 10px 25px;
+    background: transparent;
+    border: 1px solid #ccc;
+    color: #666;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-top: 15px;
+}
+
+.cancel-btn:hover {
+    background: var(--neutral-light);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .header-top {
@@ -549,4 +663,7 @@ header h1 {
         flex-direction: column;
         text-align: center;
     }
-}
+    
+    .device-code-display code {
+        font-size: 1.5rem;
+        letter-spacing: 2px;
