@@ -5,165 +5,189 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Azure Monitor Cost Optimizer</title>
     <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
         <header>
             <div class="header-top">
                 <div class="logo">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-                        <path d="M2 17l10 5 10-5"></path>
-                        <path d="M2 12l10 5 10-5"></path>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+                        <path fill="#0078d4" d="M24 4C12.954 4 4 12.954 4 24s8.954 20 20 20 20-8.954 20-20S35.046 4 24 4z"/>
+                        <path fill="#fff" d="M24 8c-8.837 0-16 7.163-16 16s7.163 16 16 16 16-7.163 16-16S32.837 8 24 8zm0 28c-6.627 0-12-5.373-12-12s5.373-12 12-12 12 5.373 12 12-5.373 12-12 12z"/>
+                        <path fill="#50e6ff" d="M24 14v10l7 7"/>
                     </svg>
                     <h1>Azure Monitor Cost Optimizer</h1>
                 </div>
-                <div class="auth-section">
-                    <div class="status-badge">
-                        <span class="status-indicator disconnected" id="statusIndicator"></span>
-                        <span id="statusText">Not signed in</span>
+                <div class="auth-status" id="authStatus">
+                    <span class="status-indicator disconnected" id="statusIndicator">●</span>
+                    <span id="statusText">Not signed in</span>
+                    <button id="signOutBtn" class="auth-btn-small" onclick="signOut()" hidden>Sign Out</button>
+                </div>
+            </div>
+            <p class="subtitle">Get AI-powered recommendations based on your actual Azure Monitor usage</p>
+        </header>
+
+        <main>
+            <!-- Auth Required Message -->
+            <section class="auth-required-section" id="authRequiredSection">
+                <div class="auth-required-content">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#0078d4" stroke-width="1.5">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 16v-4"/>
+                        <path d="M12 8h.01"/>
+                    </svg>
+                    <h2>Sign in to get started</h2>
+                    <p>Run this command in your terminal to get an access token:</p>
+                    <div class="cli-command-container">
+                        <code class="cli-command">az account get-access-token --resource https://management.azure.com --query accessToken -o tsv</code>
+                        <button class="copy-cli-btn" onclick="copyCommand()">📋 Copy</button>
                     </div>
-                    <button id="signInBtn" class="auth-btn" onclick="signIn()">
+                    <p class="auth-step">Then paste the token here:</p>
+                    <textarea id="tokenInput" class="token-input" placeholder="Paste your access token here..." rows="3"></textarea>
+                    <button id="signInBtn" class="primary-btn" onclick="signInWithToken()">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
                             <polyline points="10 17 15 12 10 7"></polyline>
                             <line x1="15" y1="12" x2="3" y2="12"></line>
                         </svg>
-                        Sign In
+                        Sign In with Token
                     </button>
-                    <button id="signOutBtn" class="auth-btn" onclick="signOut()" hidden>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                            <polyline points="16 17 21 12 16 7"></polyline>
-                            <line x1="21" y1="12" x2="9" y2="12"></line>
-                        </svg>
-                        Sign Out
-                    </button>
+                    <p class="auth-note">🔒 Your token stays in your browser and is only sent to Azure APIs.</p>
                 </div>
-            </div>
-            <p class="subtitle">Analyze your Log Analytics workspaces and get AI-powered cost optimization recommendations</p>
-        </header>
+            </section>
 
-        <!-- Not Signed In -->
-        <section id="welcomeSection" class="card">
-            <div class="welcome-content">
-                <h2>👋 Welcome!</h2>
-                <p>Analyze your Azure Log Analytics workspaces and get cost optimization recommendations.</p>
-                
-                <div class="auth-options">
-                    <div class="auth-option">
-                        <h3>🔑 Sign in with Azure CLI Token</h3>
-                        <p>Run this command in your terminal to get a token:</p>
-                        <div class="code-block">
-                            <code>az account get-access-token --resource https://management.azure.com --query accessToken -o tsv</code>
-                            <button class="copy-btn" onclick="copyCommand()">📋</button>
+            <!-- Main Input Section -->
+            <section class="input-section" id="inputSection" hidden>
+                <h2>Select Your Workspace</h2>
+                <form id="azureForm" onsubmit="runAnalysis(); return false;">
+                    <div class="form-group">
+                        <label for="subscriptionFilter">Subscription</label>
+                        <input type="text" id="subscriptionFilter" class="filter-input" placeholder="Type to filter subscriptions..." autocomplete="off" oninput="filterSubscriptions(this.value)">
+                        <select id="subscriptionSelect" name="subscriptionSelect" onchange="loadWorkspaces(this.value)">
+                            <option value="">Loading subscriptions...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Log Analytics Workspaces</label>
+                        <div class="workspace-controls">
+                            <input type="text" id="workspaceFilter" class="filter-input-small" placeholder="Filter workspaces..." oninput="filterWorkspaces(this.value)">
+                            <button type="button" id="selectAllBtn" class="select-btn" onclick="selectAllWorkspaces()">All</button>
+                            <button type="button" id="selectNoneBtn" class="select-btn" onclick="deselectAllWorkspaces()">None</button>
+                            <button type="button" id="expandAllBtn" class="select-btn" onclick="expandAllGroups()">Expand</button>
+                            <button type="button" id="collapseAllBtn" class="select-btn" onclick="collapseAllGroups()">Collapse</button>
+                            <span id="selectedCount" class="selected-count">0 selected</span>
                         </div>
-                        <p>Then paste the token here:</p>
-                        <textarea id="tokenInput" placeholder="Paste your access token here..." rows="3"></textarea>
-                        <button class="primary-btn" onclick="signInWithToken()">
-                            Sign In with Token
-                        </button>
+                        <div id="workspaceList" class="workspace-list">
+                            <div class="workspace-placeholder">Select a subscription first</div>
+                        </div>
                     </div>
-                </div>
-                
-                <div class="auth-note">
-                    <p><strong>🔒 Privacy:</strong> Your token stays in your browser and is never sent to any server except Azure APIs.</p>
-                    <p><strong>💡 Tip:</strong> For the best experience, use the <a href="https://github.com/osalzberg/azure-monitor-cost-optimizer">local Node.js version</a> which handles authentication automatically.</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- Main App (hidden until signed in) -->
-        <section id="mainApp" class="card" hidden>
-            <h2>📊 Analyze Workspaces</h2>
-            
-            <!-- Subscription Selection -->
-            <div class="form-group">
-                <label for="subscriptionFilter">Filter Subscriptions</label>
-                <input type="text" id="subscriptionFilter" placeholder="Type to filter..." oninput="filterSubscriptions(this.value)">
-            </div>
-            
-            <div class="form-group">
-                <label for="subscriptionSelect">Select Subscription</label>
-                <select id="subscriptionSelect" onchange="loadWorkspaces(this.value)">
-                    <option value="">Select a subscription...</option>
-                </select>
-            </div>
-
-            <!-- Workspace Selection -->
-            <div class="form-group">
-                <label>Select Workspaces</label>
-                <div class="workspace-controls">
-                    <button type="button" class="control-btn" onclick="selectAllWorkspaces()">Select All</button>
-                    <button type="button" class="control-btn" onclick="deselectAllWorkspaces()">Deselect All</button>
-                    <input type="text" id="workspaceFilter" placeholder="Filter workspaces..." oninput="filterWorkspaces(this.value)">
-                </div>
-                <div id="workspaceList" class="workspace-list">
-                    <div class="workspace-placeholder">Select a subscription to see workspaces</div>
-                </div>
-            </div>
-
-            <!-- OpenAI Settings (Optional) -->
-            <details class="ai-settings">
-                <summary>🤖 AI Recommendations (Optional)</summary>
-                <div class="ai-settings-content">
-                    <p>Provide your OpenAI API key to get AI-powered recommendations. Without it, you'll still see all the data analysis.</p>
+                    
                     <div class="form-group">
-                        <label for="openaiKey">OpenAI API Key</label>
-                        <input type="password" id="openaiKey" placeholder="sk-...">
+                        <label for="context">Additional Context <span class="optional">(optional)</span></label>
+                        <textarea id="context" name="context" rows="3" 
+                                  placeholder="Any specific concerns or areas you'd like us to focus on..."></textarea>
                     </div>
-                    <div class="form-group">
-                        <label for="openaiEndpoint">Azure OpenAI Endpoint (optional)</label>
-                        <input type="text" id="openaiEndpoint" placeholder="https://your-resource.openai.azure.com">
+
+                    <button type="submit" id="submitBtn" disabled>
+                        <span class="btn-text">Analyze & Get Recommendations</span>
+                        <span class="btn-loader" style="display: none;">
+                            <svg class="spinner" viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.416" stroke-dashoffset="10"/>
+                            </svg>
+                            <span id="loadingStatus">Querying workspace...</span>
+                        </span>
+                    </button>
+                </form>
+            </section>
+
+            <!-- Analysis Progress Section -->
+            <section class="progress-section" id="progressSection" hidden>
+                <h2>Analyzing Your Environment</h2>
+                <div class="progress-content">
+                    <div class="progress-item" id="progressAuth">
+                        <span class="progress-icon">⏳</span>
+                        <span class="progress-text">Authenticating...</span>
+                    </div>
+                    <div class="progress-item" id="progressQueries">
+                        <span class="progress-icon">⏳</span>
+                        <span class="progress-text">Running analysis queries...</span>
+                    </div>
+                    <div class="progress-item" id="progressAI">
+                        <span class="progress-icon">⏳</span>
+                        <span class="progress-text">Generating AI recommendations...</span>
                     </div>
                 </div>
-            </details>
+            </section>
 
-            <!-- Analyze Button -->
-            <button id="analyzeBtn" class="primary-btn" onclick="runAnalysis()" disabled>
-                Analyze Selected Workspaces
-            </button>
-        </section>
+            <section class="recommendations-section" id="recommendationsSection" hidden>
+                <h2>Cost Optimization Recommendations</h2>
+                <div class="recommendations-header">
+                    <div class="workspace-info" id="resourceInfo"></div>
+                    <button id="copyBtn" class="copy-btn" onclick="copyRecommendations()" title="Copy recommendations">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        Copy
+                    </button>
+                </div>
+                <div id="recommendationsContent" class="recommendations-content"></div>
+                <button id="newAnalysisBtn" class="secondary-btn" onclick="newAnalysis()">Start New Analysis</button>
+            </section>
 
-        <!-- Progress Section -->
-        <section id="progressSection" class="card" hidden>
-            <h2>🔄 Analyzing...</h2>
-            <div class="progress-list">
-                <div class="progress-item" id="progressAuth">
-                    <span class="progress-status">⏳</span>
-                    <span class="progress-label">Authenticating</span>
+            <section class="quick-tips">
+                <h2>Quick Reference: Azure Monitor Cost Best Practices</h2>
+                <div class="tips-grid">
+                    <div class="tip-card">
+                        <div class="tip-icon">📊</div>
+                        <h3>Log Analytics</h3>
+                        <ul>
+                            <li>Use commitment tiers for predictable workloads</li>
+                            <li>Configure Basic Logs for debug tables</li>
+                            <li>Set up data retention policies</li>
+                            <li>Create alerts for high data collection</li>
+                        </ul>
+                    </div>
+                    <div class="tip-card">
+                        <div class="tip-icon">🖥️</div>
+                        <h3>Virtual Machines</h3>
+                        <ul>
+                            <li>Migrate to Azure Monitor Agent</li>
+                            <li>Filter unnecessary data at collection</li>
+                            <li>Reduce performance counter frequency</li>
+                            <li>Avoid duplicate data collection</li>
+                        </ul>
+                    </div>
+                    <div class="tip-card">
+                        <div class="tip-icon">📦</div>
+                        <h3>Containers</h3>
+                        <ul>
+                            <li>Use Managed Prometheus for metrics</li>
+                            <li>Configure Container Insights selectively</li>
+                            <li>Use Basic Logs for container logs</li>
+                            <li>Implement OpenCost for visibility</li>
+                        </ul>
+                    </div>
+                    <div class="tip-card">
+                        <div class="tip-icon">🔔</div>
+                        <h3>Alerts</h3>
+                        <ul>
+                            <li>Use free alert types when possible</li>
+                            <li>Minimize log search alert frequency</li>
+                            <li>Reduce metric alert resource scope</li>
+                            <li>Set up Azure Advisor alerts</li>
+                        </ul>
+                    </div>
                 </div>
-                <div class="progress-item" id="progressQueries">
-                    <span class="progress-status">⏳</span>
-                    <span class="progress-label">Running queries</span>
-                </div>
-                <div class="progress-item" id="progressAnalysis">
-                    <span class="progress-status">⏳</span>
-                    <span class="progress-label">Analyzing data</span>
-                </div>
-            </div>
-        </section>
+            </section>
+        </main>
 
-        <!-- Results Section -->
-        <section id="resultsSection" class="card" hidden>
-            <div class="results-header">
-                <h2>📈 Analysis Results</h2>
-                <div class="results-actions">
-                    <button class="action-btn" onclick="copyResults()">📋 Copy</button>
-                    <button class="action-btn" onclick="exportResults()">💾 Export</button>
-                    <button class="action-btn" onclick="newAnalysis()">🔄 New Analysis</button>
-                </div>
-            </div>
-            <div id="resultsContent"></div>
-        </section>
-
-        <!-- Error Section -->
-        <section id="errorSection" class="card error-card" hidden>
-            <h2>❌ Error</h2>
-            <p id="errorMessage"></p>
-            <div id="errorHelp"></div>
-            <button class="primary-btn" onclick="dismissError()">Dismiss</button>
-        </section>
+        <footer>
+            <p>Based on <a href="https://learn.microsoft.com/en-us/azure/azure-monitor/fundamentals/best-practices-cost" target="_blank">Azure Monitor Cost Optimization Best Practices</a></p>
+            <p class="disclaimer">This tool provides recommendations based on best practices and your actual usage. Always review changes in a non-production environment first.</p>
+            <p class="disclaimer">For the best experience with automatic authentication, use the <a href="https://github.com/osalzberg/azure-monitor-cost-optimizer" target="_blank">local Node.js version</a>.</p>
+        </footer>
     </div>
 
     <script src="app.js"></script>

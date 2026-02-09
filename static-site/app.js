@@ -10,33 +10,42 @@ let selectedWorkspaces = [];
 // KQL Queries for cost analysis
 const analysisQueries = {
     dataVolumeByTable: `
-        _LogAnalyticsUsage
+        Usage
         | where TimeGenerated > ago(30d)
-        | summarize TotalGB = sum(BillableDataGB) by DataType
-        | order by TotalGB desc
+        | where IsBillable == true
+        | summarize BillableGB = sum(Quantity) / 1000 by DataType
+        | order by BillableGB desc
         | take 20
     `,
     dailyIngestionTrend: `
-        _LogAnalyticsUsage
+        Usage
         | where TimeGenerated > ago(30d)
-        | summarize DailyGB = sum(BillableDataGB) by bin(TimeGenerated, 1d)
+        | where IsBillable == true
+        | summarize DailyGB = sum(Quantity) / 1000 by bin(TimeGenerated, 1d)
         | order by TimeGenerated asc
     `,
     dataByComputer: `
-        _LogAnalyticsUsage
-        | where TimeGenerated > ago(7d)
-        | summarize TotalGB = sum(BillableDataGB) by Computer
-        | order by TotalGB desc
-        | take 10
-    `,
-    heartbeatAnalysis: `
         Heartbeat
-        | where TimeGenerated > ago(1h)
-        | summarize HeartbeatsPerHour = count() by Computer
-        | where HeartbeatsPerHour > 60
-        | order by HeartbeatsPerHour desc
+        | where TimeGenerated > ago(7d)
+        | summarize LastHeartbeat = max(TimeGenerated) by Computer, OSType
+        | order by LastHeartbeat desc
+        | take 20
+    `,
+    topTables: `
+        Usage
+        | where TimeGenerated > ago(7d)
+        | where IsBillable == true
+        | summarize TotalGB = sum(Quantity) / 1000 by DataType
+        | top 10 by TotalGB desc
     `
 };
+
+// DOM Elements
+const authRequiredSection = document.getElementById('authRequiredSection');
+const inputSection = document.getElementById('inputSection');
+const progressSection = document.getElementById('progressSection');
+const recommendationsSection = document.getElementById('recommendationsSection');
+const subscriptionSelect = document.getElementById('subscriptionSelect');
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -61,9 +70,9 @@ document.addEventListener('DOMContentLoaded', () => {
 function copyCommand() {
     const cmd = "az account get-access-token --resource https://management.azure.com --query accessToken -o tsv";
     navigator.clipboard.writeText(cmd);
-    const btn = document.querySelector('.code-block .copy-btn');
-    btn.textContent = '✓';
-    setTimeout(() => btn.textContent = '📋', 2000);
+    const btn = document.querySelector('.copy-cli-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => btn.textContent = '📋 Copy', 2000);
 }
 
 // Sign in with pasted token
@@ -77,30 +86,26 @@ function signInWithToken() {
     token = token.replace(/[\r\n]/g, '');
     
     if (!token) {
-        showError('Please paste your access token', 'Run the az command shown above and paste the result.');
+        showError('Please paste your access token');
         return;
     }
     
-    // Try to validate as JWT, but also accept if it just looks like a long token
+    // Try to validate as JWT
     const parts = token.split('.');
     
-    // Azure tokens are JWTs with 3 parts
     if (parts.length === 3) {
         try {
-            // Decode token to get expiry and username
             const payload = JSON.parse(atob(parts[1]));
-            const exp = payload.exp * 1000; // Convert to milliseconds
+            const exp = payload.exp * 1000;
             
             if (exp < Date.now()) {
-                showError('Token expired', 'Please generate a fresh token using the az command.');
+                showError('Token expired. Please generate a fresh token using the az command.');
                 return;
             }
             
             const username = payload.upn || payload.unique_name || payload.preferred_username || 'User';
             
             accessToken = token;
-            
-            // Save token
             localStorage.setItem('azureToken', JSON.stringify({
                 token: token,
                 username: username,
@@ -109,26 +114,24 @@ function signInWithToken() {
             
             onSignedIn(username);
             return;
-            
         } catch (e) {
             console.error('Token decode error:', e);
-            // Fall through to try using it anyway
         }
     }
     
-    // If we couldn't parse it as JWT but it looks like a token, try to use it anyway
+    // If we couldn't parse but it looks like a token, try anyway
     if (token.length > 100) {
         accessToken = token;
         localStorage.setItem('azureToken', JSON.stringify({
             token: token,
             username: 'User',
-            expiresAt: Date.now() + (60 * 60 * 1000) // Assume 1 hour
+            expiresAt: Date.now() + (60 * 60 * 1000)
         }));
         onSignedIn('User');
         return;
     }
     
-    showError('Invalid token', 'The token appears to be incomplete. Make sure you copied the entire output from the az command (it\'s a very long string).');
+    showError('Invalid token. Make sure you copied the entire output from the az command.');
 }
 
 // Sign Out
@@ -140,22 +143,14 @@ function signOut() {
 
 // Called when user is signed in
 function onSignedIn(username) {
-    updateStatus('connected', username);
-    
-    document.getElementById('welcomeSection').hidden = true;
-    document.getElementById('mainApp').hidden = false;
-    document.getElementById('signInBtn').hidden = true;
+    document.getElementById('statusIndicator').className = 'status-indicator connected';
+    document.getElementById('statusText').textContent = username;
     document.getElementById('signOutBtn').hidden = false;
     
+    authRequiredSection.hidden = true;
+    inputSection.hidden = false;
+    
     loadSubscriptions();
-}
-
-// Update status indicator
-function updateStatus(status, text) {
-    const indicator = document.getElementById('statusIndicator');
-    const statusText = document.getElementById('statusText');
-    indicator.className = `status-indicator ${status}`;
-    statusText.textContent = text;
 }
 
 // Load subscriptions
@@ -171,6 +166,7 @@ async function loadSubscriptions() {
         
         if (!response.ok) {
             if (response.status === 401) {
+                showError('Token expired. Please sign in again.');
                 signOut();
                 return;
             }
@@ -191,14 +187,14 @@ async function loadSubscriptions() {
     } catch (error) {
         console.error('Error loading subscriptions:', error);
         select.innerHTML = '<option value="">Error loading subscriptions</option>';
-        showError('Failed to load subscriptions', error.message);
+        showError('Failed to load subscriptions: ' + error.message);
     }
 }
 
 // Render subscriptions dropdown
 function renderSubscriptions(subscriptions) {
     const select = document.getElementById('subscriptionSelect');
-    select.innerHTML = '<option value="">Select a subscription...</option>';
+    select.innerHTML = '<option value="">Select from ' + subscriptions.length + ' subscription(s)...</option>';
     
     subscriptions.forEach(sub => {
         const option = document.createElement('option');
@@ -211,7 +207,8 @@ function renderSubscriptions(subscriptions) {
 // Filter subscriptions
 function filterSubscriptions(searchText) {
     const filtered = allSubscriptions.filter(sub =>
-        sub.name.toLowerCase().includes(searchText.toLowerCase())
+        sub.name.toLowerCase().includes(searchText.toLowerCase()) ||
+        sub.id.toLowerCase().includes(searchText.toLowerCase())
     );
     renderSubscriptions(filtered);
 }
@@ -220,7 +217,7 @@ function filterSubscriptions(searchText) {
 async function loadWorkspaces(subscriptionId) {
     if (!subscriptionId) {
         document.getElementById('workspaceList').innerHTML = 
-            '<div class="workspace-placeholder">Select a subscription to see workspaces</div>';
+            '<div class="workspace-placeholder">Select a subscription first</div>';
         return;
     }
     
@@ -243,7 +240,9 @@ async function loadWorkspaces(subscriptionId) {
             name: ws.name,
             resourceId: ws.id,
             location: ws.location,
-            resourceGroup: extractResourceGroup(ws.id)
+            resourceGroup: extractResourceGroup(ws.id),
+            sku: ws.properties.sku?.name || 'Unknown',
+            retentionDays: ws.properties.retentionInDays || 30
         }));
         
         if (currentWorkspaces.length === 0) {
@@ -252,8 +251,8 @@ async function loadWorkspaces(subscriptionId) {
             return;
         }
         
-        renderWorkspaces();
-        updateAnalyzeButton();
+        renderWorkspaceList();
+        updateSelectedCount();
         
     } catch (error) {
         console.error('Error loading workspaces:', error);
@@ -268,467 +267,778 @@ function extractResourceGroup(resourceId) {
     return match ? match[1] : 'Unknown';
 }
 
-// Render workspaces grouped by resource group
-function renderWorkspaces() {
+// Group workspaces by resource group
+function groupWorkspacesByRG(workspaces) {
+    const groups = {};
+    workspaces.forEach(ws => {
+        const rg = ws.resourceGroup;
+        if (!groups[rg]) {
+            groups[rg] = [];
+        }
+        groups[rg].push(ws);
+    });
+    return Object.keys(groups).sort().reduce((sorted, key) => {
+        sorted[key] = groups[key].sort((a, b) => a.name.localeCompare(b.name));
+        return sorted;
+    }, {});
+}
+
+// Render workspace list grouped by resource group
+function renderWorkspaceList() {
     const container = document.getElementById('workspaceList');
     container.innerHTML = '';
     
-    // Group by resource group
-    const groups = {};
-    currentWorkspaces.forEach(ws => {
-        if (!groups[ws.resourceGroup]) {
-            groups[ws.resourceGroup] = [];
-        }
-        groups[ws.resourceGroup].push(ws);
-    });
+    const groupedWorkspaces = groupWorkspacesByRG(currentWorkspaces);
+    let wsIndex = 0;
     
-    Object.keys(groups).sort().forEach(rgName => {
+    Object.entries(groupedWorkspaces).forEach(([rgName, workspaces]) => {
         const rgDiv = document.createElement('div');
         rgDiv.className = 'resource-group';
+        rgDiv.dataset.rgName = rgName;
         
         const header = document.createElement('div');
         header.className = 'resource-group-header';
         header.innerHTML = `
-            <input type="checkbox" class="rg-checkbox" data-rg="${rgName}" onchange="toggleResourceGroup('${rgName}', this.checked)">
+            <span class="expand-icon">▼</span>
+            <input type="checkbox" class="rg-checkbox" data-rg="${rgName}">
             <span class="rg-name">${rgName}</span>
-            <span class="rg-count">(${groups[rgName].length})</span>
+            <span class="rg-count">(${workspaces.length})</span>
         `;
         
-        const workspacesDiv = document.createElement('div');
-        workspacesDiv.className = 'resource-group-workspaces';
+        const wsContainer = document.createElement('div');
+        wsContainer.className = 'resource-group-workspaces';
         
-        groups[rgName].forEach((ws, idx) => {
+        workspaces.forEach(ws => {
             const item = document.createElement('div');
             item.className = 'workspace-item';
+            item.dataset.wsName = ws.name.toLowerCase();
+            item.dataset.rgName = rgName.toLowerCase();
             item.innerHTML = `
-                <input type="checkbox" class="ws-checkbox" id="ws_${rgName}_${idx}" 
-                       value="${ws.id}" data-name="${ws.name}" data-rg="${ws.resourceGroup}"
-                       onchange="updateAnalyzeButton()">
-                <label for="ws_${rgName}_${idx}">${ws.name}</label>
+                <input type="checkbox" class="ws-checkbox" id="ws_${wsIndex}" value="${ws.id}" data-rg="${rgName}">
+                <label for="ws_${wsIndex}">${ws.name}</label>
+                <span class="workspace-location">${ws.location}</span>
             `;
-            workspacesDiv.appendChild(item);
+            
+            const checkbox = item.querySelector('input');
+            checkbox.addEventListener('change', () => {
+                updateRGCheckbox(rgName);
+                updateSelectedWorkspaces();
+            });
+            
+            item.addEventListener('click', (e) => {
+                if (e.target.tagName !== 'INPUT') {
+                    checkbox.checked = !checkbox.checked;
+                    updateRGCheckbox(rgName);
+                    updateSelectedWorkspaces();
+                }
+            });
+            
+            wsContainer.appendChild(item);
+            wsIndex++;
         });
         
         rgDiv.appendChild(header);
-        rgDiv.appendChild(workspacesDiv);
+        rgDiv.appendChild(wsContainer);
         container.appendChild(rgDiv);
+        
+        // RG checkbox event
+        const rgCheckbox = header.querySelector('.rg-checkbox');
+        rgCheckbox.addEventListener('change', (e) => {
+            const checked = e.target.checked;
+            wsContainer.querySelectorAll('.ws-checkbox').forEach(cb => {
+                cb.checked = checked;
+            });
+            updateSelectedWorkspaces();
+        });
+        
+        // Expand/collapse
+        header.addEventListener('click', (e) => {
+            if (e.target.tagName === 'INPUT') return;
+            const icon = header.querySelector('.expand-icon');
+            icon.classList.toggle('collapsed');
+            wsContainer.classList.toggle('collapsed');
+        });
+    });
+    
+    // Select first workspace by default if small number
+    if (currentWorkspaces.length <= 5 && currentWorkspaces.length > 0) {
+        const firstCheckbox = container.querySelector('.ws-checkbox');
+        if (firstCheckbox) {
+            firstCheckbox.checked = true;
+            updateRGCheckbox(firstCheckbox.dataset.rg);
+            updateSelectedWorkspaces();
+        }
+    }
+}
+
+// Update RG checkbox state
+function updateRGCheckbox(rgName) {
+    const wsCheckboxes = document.querySelectorAll(`.ws-checkbox[data-rg="${rgName}"]`);
+    const rgCheckbox = document.querySelector(`.rg-checkbox[data-rg="${rgName}"]`);
+    
+    if (!rgCheckbox) return;
+    
+    const checkedCount = Array.from(wsCheckboxes).filter(cb => cb.checked).length;
+    rgCheckbox.checked = checkedCount === wsCheckboxes.length;
+    rgCheckbox.indeterminate = checkedCount > 0 && checkedCount < wsCheckboxes.length;
+}
+
+// Update selected workspaces array
+function updateSelectedWorkspaces() {
+    const checkboxes = document.querySelectorAll('.ws-checkbox:checked');
+    selectedWorkspaces = Array.from(checkboxes).map(cb => {
+        return currentWorkspaces.find(ws => ws.id === cb.value);
+    }).filter(Boolean);
+    updateSelectedCount();
+    updateSubmitButton();
+}
+
+// Update selected count display
+function updateSelectedCount() {
+    const countEl = document.getElementById('selectedCount');
+    const count = selectedWorkspaces.length;
+    const rgCount = new Set(selectedWorkspaces.map(ws => ws.resourceGroup)).size;
+    countEl.textContent = `${count} workspace${count !== 1 ? 's' : ''} in ${rgCount} RG${rgCount !== 1 ? 's' : ''}`;
+    countEl.style.color = count > 0 ? 'var(--azure-blue)' : '#888';
+}
+
+// Update submit button state
+function updateSubmitButton() {
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = selectedWorkspaces.length === 0;
+}
+
+// Select all visible workspaces
+function selectAllWorkspaces() {
+    document.querySelectorAll('.ws-checkbox, .rg-checkbox').forEach(cb => {
+        const item = cb.closest('.workspace-item');
+        if (!item || !item.classList.contains('hidden')) {
+            cb.checked = true;
+            cb.indeterminate = false;
+        }
+    });
+    document.querySelectorAll('.resource-group').forEach(rg => {
+        updateRGCheckbox(rg.dataset.rgName);
+    });
+    updateSelectedWorkspaces();
+}
+
+// Clear all selections
+function deselectAllWorkspaces() {
+    document.querySelectorAll('.ws-checkbox, .rg-checkbox').forEach(cb => {
+        cb.checked = false;
+        cb.indeterminate = false;
+    });
+    updateSelectedWorkspaces();
+}
+
+// Expand all resource groups
+function expandAllGroups() {
+    document.querySelectorAll('.resource-group-workspaces').forEach(ws => {
+        ws.classList.remove('collapsed');
+    });
+    document.querySelectorAll('.expand-icon').forEach(icon => {
+        icon.classList.remove('collapsed');
     });
 }
 
-// Toggle resource group selection
-function toggleResourceGroup(rgName, checked) {
-    const checkboxes = document.querySelectorAll(`.ws-checkbox[data-rg="${rgName}"]`);
-    checkboxes.forEach(cb => cb.checked = checked);
-    updateAnalyzeButton();
-}
-
-// Select/Deselect all
-function selectAllWorkspaces() {
-    document.querySelectorAll('.ws-checkbox').forEach(cb => cb.checked = true);
-    document.querySelectorAll('.rg-checkbox').forEach(cb => cb.checked = true);
-    updateAnalyzeButton();
-}
-
-function deselectAllWorkspaces() {
-    document.querySelectorAll('.ws-checkbox').forEach(cb => cb.checked = false);
-    document.querySelectorAll('.rg-checkbox').forEach(cb => cb.checked = false);
-    updateAnalyzeButton();
+// Collapse all resource groups
+function collapseAllGroups() {
+    document.querySelectorAll('.resource-group-workspaces').forEach(ws => {
+        ws.classList.add('collapsed');
+    });
+    document.querySelectorAll('.expand-icon').forEach(icon => {
+        icon.classList.add('collapsed');
+    });
 }
 
 // Filter workspaces
 function filterWorkspaces(searchText) {
-    const items = document.querySelectorAll('.workspace-item');
-    const rgs = document.querySelectorAll('.resource-group');
+    const search = searchText.toLowerCase();
     
-    items.forEach(item => {
-        const name = item.querySelector('label').textContent.toLowerCase();
-        item.style.display = name.includes(searchText.toLowerCase()) ? '' : 'none';
+    document.querySelectorAll('.workspace-item').forEach(item => {
+        const wsName = item.dataset.wsName || '';
+        const rgName = item.dataset.rgName || '';
+        const matches = wsName.includes(search) || rgName.includes(search);
+        item.classList.toggle('hidden', !matches);
     });
     
-    // Hide empty resource groups
-    rgs.forEach(rg => {
-        const visibleItems = rg.querySelectorAll('.workspace-item:not([style*="display: none"])');
+    document.querySelectorAll('.resource-group').forEach(rg => {
+        const visibleItems = rg.querySelectorAll('.workspace-item:not(.hidden)');
         rg.style.display = visibleItems.length > 0 ? '' : 'none';
     });
 }
 
-// Update analyze button state
-function updateAnalyzeButton() {
-    const checked = document.querySelectorAll('.ws-checkbox:checked');
-    const btn = document.getElementById('analyzeBtn');
-    btn.disabled = checked.length === 0;
-    btn.textContent = checked.length > 0 
-        ? `Analyze ${checked.length} Workspace${checked.length > 1 ? 's' : ''}`
-        : 'Select workspaces to analyze';
-}
-
 // Run analysis
 async function runAnalysis() {
-    const selectedCheckboxes = document.querySelectorAll('.ws-checkbox:checked');
-    if (selectedCheckboxes.length === 0) return;
+    if (selectedWorkspaces.length === 0) {
+        showError('Please select at least one workspace');
+        return;
+    }
     
-    const workspaces = Array.from(selectedCheckboxes).map(cb => {
-        const ws = currentWorkspaces.find(w => w.id === cb.value);
-        return ws;
-    });
+    // Warn if selecting too many
+    if (selectedWorkspaces.length > 10) {
+        if (!confirm(`You selected ${selectedWorkspaces.length} workspaces. This may take a while. Continue?`)) {
+            return;
+        }
+    }
     
-    // Show progress
-    document.getElementById('mainApp').hidden = true;
-    document.getElementById('progressSection').hidden = false;
-    document.getElementById('resultsSection').hidden = true;
+    // Show progress section
+    inputSection.hidden = true;
+    progressSection.hidden = false;
+    recommendationsSection.hidden = true;
     
     try {
         updateProgress('progressAuth', 'complete', 'Authenticated');
         
-        updateProgress('progressQueries', 'running', 'Running queries...');
+        // Step 1: Run queries
+        const totalWorkspaces = selectedWorkspaces.length;
+        let allQueryData = {};
         
-        const allResults = {};
-        for (const ws of workspaces) {
-            allResults[ws.name] = await queryWorkspace(ws.id, accessToken);
+        for (let i = 0; i < selectedWorkspaces.length; i++) {
+            const ws = selectedWorkspaces[i];
+            updateProgress('progressQueries', 'running', `Querying workspace ${i + 1}/${totalWorkspaces}: ${ws.name}...`);
+            
+            const queryResults = await queryWorkspace(ws);
+            allQueryData[ws.name] = queryResults;
         }
         
-        updateProgress('progressQueries', 'complete', `Queried ${workspaces.length} workspace(s)`);
+        updateProgress('progressQueries', 'complete', `Analyzed ${Object.keys(allQueryData).length} workspace(s)`);
         
-        updateProgress('progressAnalysis', 'running', 'Analyzing data...');
-        const analysis = analyzeResults(allResults, workspaces);
-        updateProgress('progressAnalysis', 'complete', 'Analysis complete');
+        // Check if we got any actual data
+        const dataSummary = summarizeQueryData(allQueryData);
         
-        // Check for AI
-        const openaiKey = document.getElementById('openaiKey').value;
-        let aiRecommendations = null;
-        
-        if (openaiKey) {
-            updateProgress('progressAnalysis', 'running', 'Getting AI recommendations...');
-            aiRecommendations = await getAIRecommendations(analysis, openaiKey);
-            updateProgress('progressAnalysis', 'complete', 'AI recommendations ready');
+        // If no data, show helpful message
+        if (dataSummary.totalWorkspaces === 0 || dataSummary.workspacesWithData === 0) {
+            progressSection.hidden = true;
+            showNoDataResults(selectedWorkspaces, dataSummary);
+            return;
         }
         
-        // Show results
-        setTimeout(() => {
-            document.getElementById('progressSection').hidden = true;
-            showResults(analysis, aiRecommendations);
-        }, 500);
+        // If minimal data
+        if (dataSummary.totalIngestionGB < 1) {
+            progressSection.hidden = true;
+            showMinimalDataResults(selectedWorkspaces, dataSummary);
+            return;
+        }
+        
+        // Generate recommendations (without AI for static site)
+        updateProgress('progressAI', 'running', 'Generating recommendations...');
+        
+        const recommendations = generateRecommendations(allQueryData, dataSummary);
+        updateProgress('progressAI', 'complete', 'Recommendations generated');
+        
+        // Show recommendations
+        progressSection.hidden = true;
+        showRecommendations(recommendations, selectedWorkspaces, dataSummary);
         
     } catch (error) {
         console.error('Analysis error:', error);
-        document.getElementById('progressSection').hidden = true;
-        document.getElementById('mainApp').hidden = false;
-        showError('Analysis failed', error.message);
+        progressSection.hidden = true;
+        inputSection.hidden = false;
+        showError(`Analysis failed: ${error.message}`);
     }
 }
 
-// Query a workspace
-async function queryWorkspace(workspaceId, token) {
+// Query a workspace using Log Analytics API
+async function queryWorkspace(workspace) {
     const results = {};
     
-    for (const [name, query] of Object.entries(analysisQueries)) {
+    for (const [queryName, query] of Object.entries(analysisQueries)) {
         try {
             const response = await fetch(
-                `https://api.loganalytics.io/v1/workspaces/${workspaceId}/query`,
+                `https://api.loganalytics.io/v1/workspaces/${workspace.id}/query`,
                 {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`,
+                        'Authorization': `Bearer ${accessToken}`,
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ query })
                 }
             );
             
-            if (response.ok) {
-                const data = await response.json();
-                results[name] = {
-                    columns: data.tables[0]?.columns.map(c => c.name) || [],
-                    rows: data.tables[0]?.rows || []
+            if (!response.ok) {
+                results[queryName] = { error: `HTTP ${response.status}`, rows: [], columns: [] };
+                continue;
+            }
+            
+            const data = await response.json();
+            const table = data.tables?.[0];
+            
+            if (table) {
+                results[queryName] = {
+                    columns: table.columns.map(c => c.name),
+                    rows: table.rows || []
                 };
             } else {
-                results[name] = { error: `HTTP ${response.status}` };
+                results[queryName] = { rows: [], columns: [] };
             }
-        } catch (e) {
-            results[name] = { error: e.message };
+        } catch (error) {
+            results[queryName] = { error: error.message, rows: [], columns: [] };
         }
     }
     
     return results;
 }
 
-// Analyze results
-function analyzeResults(allResults, workspaces) {
-    const analysis = {
-        workspaces: workspaces.length,
+// Summarize query data
+function summarizeQueryData(allQueryData) {
+    const summary = {
+        totalWorkspaces: Object.keys(allQueryData).length,
+        workspacesWithData: 0,
+        workspacesEmpty: 0,
         totalIngestionGB: 0,
-        estimatedMonthlyCost: 0,
-        tableBreakdown: {},
-        topComputers: [],
-        excessiveHeartbeats: [],
-        recommendations: []
+        byResourceGroup: {},
+        topTables: []
     };
     
-    for (const [wsName, results] of Object.entries(allResults)) {
-        // Data volume by table
-        if (results.dataVolumeByTable?.rows) {
-            results.dataVolumeByTable.rows.forEach(row => {
-                const [table, gb] = row;
-                const gbNum = parseFloat(gb) || 0;
-                analysis.totalIngestionGB += gbNum;
-                analysis.tableBreakdown[table] = (analysis.tableBreakdown[table] || 0) + gbNum;
+    const tableData = {};
+    
+    for (const [wsName, queryResults] of Object.entries(allQueryData)) {
+        const ws = currentWorkspaces.find(w => w.name === wsName);
+        const rg = ws?.resourceGroup || 'Unknown';
+        
+        if (!summary.byResourceGroup[rg]) {
+            summary.byResourceGroup[rg] = { workspaces: [], totalGB: 0, hasData: false };
+        }
+        
+        const volumeData = queryResults.dataVolumeByTable;
+        let wsGB = 0;
+        
+        if (volumeData && volumeData.rows && volumeData.rows.length > 0) {
+            const gbIndex = volumeData.columns?.indexOf('BillableGB') ?? 1;
+            const typeIndex = volumeData.columns?.indexOf('DataType') ?? 0;
+            
+            volumeData.rows.forEach(row => {
+                const gb = parseFloat(row[gbIndex]) || 0;
+                const tableName = row[typeIndex] || 'Unknown';
+                wsGB += gb;
+                
+                if (!tableData[tableName]) tableData[tableName] = 0;
+                tableData[tableName] += gb;
             });
         }
         
-        // Excessive heartbeats
-        if (results.heartbeatAnalysis?.rows) {
-            results.heartbeatAnalysis.rows.forEach(row => {
-                analysis.excessiveHeartbeats.push({
-                    computer: row[0],
-                    heartbeatsPerHour: row[1]
-                });
-            });
+        summary.byResourceGroup[rg].workspaces.push({ name: wsName, gb: wsGB });
+        summary.byResourceGroup[rg].totalGB += wsGB;
+        
+        if (wsGB > 0) {
+            summary.workspacesWithData++;
+            summary.byResourceGroup[rg].hasData = true;
+        } else {
+            summary.workspacesEmpty++;
         }
+        
+        summary.totalIngestionGB += wsGB;
     }
     
-    // Calculate cost estimate
-    analysis.estimatedMonthlyCost = analysis.totalIngestionGB * 2.76;
+    // Top tables
+    summary.topTables = Object.entries(tableData)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([name, gb]) => ({ name, gb }));
     
-    // Generate recommendations
-    const sortedTables = Object.entries(analysis.tableBreakdown)
-        .sort((a, b) => b[1] - a[1]);
-    
-    // Basic Logs candidates
-    const basicLogsCandidates = ['Perf', 'ContainerInventory', 'Syslog', 'ContainerLog', 'SecurityEvent'];
-    const eligibleTables = sortedTables.filter(([table]) => basicLogsCandidates.includes(table));
-    
-    if (eligibleTables.length > 0) {
-        const potentialSavings = eligibleTables.reduce((sum, [, gb]) => sum + (gb * 2.26), 0);
-        analysis.recommendations.push({
-            type: 'savings',
-            title: 'Move Tables to Basic Logs',
-            impact: `$${potentialSavings.toFixed(2)}/month`,
-            tables: eligibleTables,
-            action: 'Go to Log Analytics workspace > Tables > Select table > Change plan to Basic Logs'
-        });
-    }
-    
-    // Excessive heartbeat recommendation
-    if (analysis.excessiveHeartbeats.length > 0) {
-        analysis.recommendations.push({
-            type: 'warning',
-            title: 'Excessive Heartbeat Frequency',
-            computers: analysis.excessiveHeartbeats,
-            action: 'Adjust agent heartbeat frequency to reduce ingestion'
-        });
-    }
-    
-    return analysis;
+    return summary;
 }
 
-// Get AI recommendations (optional)
-async function getAIRecommendations(analysis, apiKey) {
-    const endpoint = document.getElementById('openaiEndpoint').value;
-    const isAzure = endpoint && endpoint.includes('openai.azure.com');
+// Generate recommendations based on data analysis
+function generateRecommendations(allQueryData, dataSummary) {
+    let recommendations = '';
     
-    const prompt = `Analyze this Azure Monitor data and provide cost optimization recommendations:
+    const totalGB = dataSummary.totalIngestionGB;
+    const dailyGB = totalGB / 30;
+    const monthlyCost = totalGB * 2.76;
     
-Total Ingestion: ${analysis.totalIngestionGB.toFixed(2)} GB/month
-Estimated Cost: $${analysis.estimatedMonthlyCost.toFixed(2)}/month
-Top Tables: ${JSON.stringify(Object.entries(analysis.tableBreakdown).slice(0, 5))}
-Excessive Heartbeats: ${analysis.excessiveHeartbeats.length} computers
+    // Executive Summary
+    recommendations += `[CARD:info]
+[TITLE]📊 Executive Summary[/TITLE]
+[IMPACT]${totalGB.toFixed(2)} GB/month[/IMPACT]
 
-Provide specific, actionable recommendations.`;
+**Total 30-Day Ingestion:** ${totalGB.toFixed(2)} GB
+**Average Daily Ingestion:** ${dailyGB.toFixed(2)} GB/day
+**Estimated Monthly Cost:** $${monthlyCost.toFixed(2)} (at $2.76/GB Pay-As-You-Go)
+**Workspaces Analyzed:** ${dataSummary.workspacesWithData}/${dataSummary.totalWorkspaces} with data
+[/CARD]
 
-    try {
-        let response;
-        if (isAzure) {
-            response = await fetch(`${endpoint}/openai/deployments/gpt-4/chat/completions?api-version=2024-02-15-preview`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'api-key': apiKey
-                },
-                body: JSON.stringify({
-                    messages: [{ role: 'user', content: prompt }],
-                    max_tokens: 1000
-                })
-            });
-        } else {
-            response = await fetch('https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
-                body: JSON.stringify({
-                    model: 'gpt-4',
-                    messages: [{ role: 'user', content: prompt }],
-                    max_tokens: 1000
-                })
-            });
-        }
+`;
+    
+    // Top Tables Analysis
+    if (dataSummary.topTables.length > 0) {
+        let tableRows = '';
+        dataSummary.topTables.forEach(t => {
+            const pct = ((t.gb / totalGB) * 100).toFixed(1);
+            tableRows += `| ${t.name} | ${t.gb.toFixed(2)} GB | ${pct}% | $${(t.gb * 2.76).toFixed(2)} |\n`;
+        });
         
-        const data = await response.json();
-        return data.choices?.[0]?.message?.content || null;
-    } catch (e) {
-        console.error('AI error:', e);
-        return null;
+        recommendations += `[CARD:info]
+[TITLE]📈 Top Data Sources[/TITLE]
+
+| Table | 30-Day Volume | % of Total | Est. Cost |
+|-------|---------------|------------|-----------|
+${tableRows}
+[/CARD]
+
+`;
     }
+    
+    // Commitment Tier Recommendation
+    if (dailyGB >= 100) {
+        const tier100Savings = ((dailyGB * 30 * 2.76) - (dailyGB * 30 * 2.30)) / (dailyGB * 30 * 2.76) * 100;
+        recommendations += `[CARD:savings]
+[TITLE]💰 Commitment Tier Opportunity[/TITLE]
+[IMPACT]Save ~${tier100Savings.toFixed(0)}%[/IMPACT]
+
+Your daily ingestion of **${dailyGB.toFixed(2)} GB** qualifies for commitment tier pricing!
+
+**Current Pay-As-You-Go:** $${(dailyGB * 30 * 2.76).toFixed(2)}/month
+**100 GB/day Commitment:** $${(dailyGB * 30 * 2.30).toFixed(2)}/month
+**Potential Savings:** $${((dailyGB * 30 * 2.76) - (dailyGB * 30 * 2.30)).toFixed(2)}/month
+
+[ACTION]Navigate to Log Analytics workspace > Usage and estimated costs > Pricing Tier[/ACTION]
+[DOCS]https://learn.microsoft.com/azure/azure-monitor/logs/cost-logs#commitment-tiers[/DOCS]
+[/CARD]
+
+`;
+    } else if (dailyGB >= 50) {
+        recommendations += `[CARD:info]
+[TITLE]📈 Approaching Commitment Tier[/TITLE]
+
+Your daily ingestion of **${dailyGB.toFixed(2)} GB** is approaching the 100 GB/day threshold for commitment tier savings.
+
+At 100 GB/day, you could save ~17% with the commitment tier.
+
+[ACTION]Monitor ingestion growth and consider commitment tier when reaching 100 GB/day[/ACTION]
+[/CARD]
+
+`;
+    }
+    
+    // Basic Logs Recommendation
+    const debugTables = ['ContainerLogV2', 'AppTraces', 'AzureDiagnostics', 'Syslog'];
+    const debugTableData = dataSummary.topTables.filter(t => debugTables.includes(t.name));
+    
+    if (debugTableData.length > 0) {
+        const debugGB = debugTableData.reduce((sum, t) => sum + t.gb, 0);
+        const savings = debugGB * 2.76 * 0.5; // Basic logs are ~50% cheaper
+        
+        recommendations += `[CARD:savings]
+[TITLE]💡 Basic Logs Opportunity[/TITLE]
+[IMPACT]Save ~$${savings.toFixed(2)}/month[/IMPACT]
+
+These tables are candidates for Basic Logs (lower cost, limited query):
+
+${debugTableData.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
+
+Basic Logs cost ~50% less but have limited query capabilities (8 days retention, simplified queries).
+
+[ACTION]Configure Basic Logs for debug/verbose tables in Log Analytics workspace settings[/ACTION]
+[DOCS]https://learn.microsoft.com/azure/azure-monitor/logs/basic-logs-configure[/DOCS]
+[/CARD]
+
+`;
+    }
+    
+    // Retention Recommendation
+    recommendations += `[CARD:info]
+[TITLE]🗄️ Data Retention Settings[/TITLE]
+
+**Current retention:** Check each workspace's retention settings
+
+**Recommendations:**
+- Set interactive retention to 30-90 days for most tables
+- Use archive tier for data needed beyond 90 days (90% cheaper)
+- Security data may need longer retention for compliance
+
+[ACTION]Review retention settings in each workspace under Tables > Manage table[/ACTION]
+[DOCS]https://learn.microsoft.com/azure/azure-monitor/logs/data-retention-archive[/DOCS]
+[/CARD]
+
+`;
+    
+    // DCR Filtering Recommendation
+    recommendations += `[CARD:info]
+[TITLE]🔧 Data Collection Optimization[/TITLE]
+
+**Filter data at the source using Data Collection Rules (DCRs):**
+
+- Filter out unwanted columns before ingestion
+- Drop verbose log levels (Debug, Trace)
+- Sample high-volume telemetry
+- Exclude non-essential resources
+
+Example transformation to drop debug logs:
+\`\`\`kql
+source | where SeverityLevel != "Debug"
+\`\`\`
+
+[ACTION]Review and optimize Data Collection Rules for each data source[/ACTION]
+[DOCS]https://learn.microsoft.com/azure/azure-monitor/essentials/data-collection-transformations[/DOCS]
+[/CARD]
+
+`;
+    
+    return recommendations;
 }
 
 // Update progress indicator
 function updateProgress(id, status, text) {
     const item = document.getElementById(id);
-    item.className = `progress-item ${status}`;
-    const statusEl = item.querySelector('.progress-status');
-    const labelEl = item.querySelector('.progress-label');
+    const icon = item.querySelector('.progress-icon');
+    const textEl = item.querySelector('.progress-text');
     
-    statusEl.textContent = status === 'complete' ? '✅' : status === 'error' ? '❌' : '🔄';
-    labelEl.textContent = text;
+    switch (status) {
+        case 'running':
+            icon.textContent = '🔄';
+            break;
+        case 'complete':
+            icon.textContent = '✅';
+            break;
+        case 'error':
+            icon.textContent = '❌';
+            break;
+    }
+    textEl.textContent = text;
 }
 
-// Show results
-function showResults(analysis, aiRecommendations) {
-    document.getElementById('resultsSection').hidden = false;
-    const content = document.getElementById('resultsContent');
+// Show recommendations
+function showRecommendations(recommendations, workspaces, dataSummary) {
+    const resourceInfo = document.getElementById('resourceInfo');
+    
+    const totalGB = dataSummary.totalIngestionGB.toFixed(2);
+    resourceInfo.innerHTML = `
+        <strong>Workspaces:</strong> ${dataSummary.workspacesWithData}/${dataSummary.totalWorkspaces} with data | 
+        <strong>Total Ingestion:</strong> ${totalGB} GB (30 days) |
+        <strong>Resource Groups:</strong> ${Object.keys(dataSummary.byResourceGroup).length}
+    `;
+    
+    const content = document.getElementById('recommendationsContent');
+    content.innerHTML = formatMarkdown(recommendations);
+    
+    recommendationsSection.hidden = false;
+}
+
+// Show no data results
+function showNoDataResults(workspaces, dataSummary) {
+    const resourceInfo = document.getElementById('resourceInfo');
+    const content = document.getElementById('recommendationsContent');
+    
+    const byRG = {};
+    workspaces.forEach(ws => {
+        const rg = ws.resourceGroup || 'Unknown';
+        if (!byRG[rg]) byRG[rg] = [];
+        byRG[rg].push(ws.name);
+    });
+    
+    resourceInfo.innerHTML = `
+        <strong>Workspaces Analyzed:</strong> ${workspaces.length} | 
+        <strong>Resource Groups:</strong> ${Object.keys(byRG).length} |
+        <span style="color: var(--warning-orange);">⚠️ No billable data found</span>
+    `;
     
     let html = `
-        <div class="summary-grid">
-            <div class="summary-card">
-                <div class="value">${analysis.workspaces}</div>
-                <div class="label">Workspaces Analyzed</div>
+        <div class="no-data-message">
+            <h2>📊 No Billable Data Found</h2>
+            <p>The selected workspaces have no billable data ingestion in the last 30 days.</p>
+            
+            <h3>Workspaces Analyzed by Resource Group:</h3>
+            <div class="rg-summary">
+    `;
+    
+    for (const [rgName, wsNames] of Object.entries(byRG)) {
+        html += `
+            <div class="rg-summary-item">
+                <strong>${rgName}</strong>
+                <ul>
+                    ${wsNames.map(name => `<li>${name} - <em>No data</em></li>`).join('')}
+                </ul>
             </div>
-            <div class="summary-card">
-                <div class="value">${analysis.totalIngestionGB.toFixed(2)} GB</div>
-                <div class="label">Total Ingestion (30 days)</div>
+        `;
+    }
+    
+    html += `
             </div>
-            <div class="summary-card">
-                <div class="value">$${analysis.estimatedMonthlyCost.toFixed(2)}</div>
-                <div class="label">Estimated Monthly Cost</div>
+            
+            <h3>What This Means</h3>
+            <ul>
+                <li>These workspaces have no recent log ingestion</li>
+                <li>Current cost is likely minimal or zero</li>
+                <li>No specific optimization recommendations can be made without data</li>
+            </ul>
+            
+            <h3>Suggestions</h3>
+            <ul>
+                <li>Select workspaces that are actively receiving data</li>
+                <li>Check if data collection is properly configured</li>
+                <li>Verify DCRs (Data Collection Rules) are targeting these workspaces</li>
+            </ul>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+    recommendationsSection.hidden = false;
+}
+
+// Show minimal data results
+function showMinimalDataResults(workspaces, dataSummary) {
+    const resourceInfo = document.getElementById('resourceInfo');
+    const content = document.getElementById('recommendationsContent');
+    
+    const totalGB = dataSummary.totalIngestionGB.toFixed(2);
+    const monthlyCost = (dataSummary.totalIngestionGB * 2.76).toFixed(2);
+    
+    resourceInfo.innerHTML = `
+        <strong>Workspaces:</strong> ${dataSummary.workspacesWithData}/${dataSummary.totalWorkspaces} with data | 
+        <strong>Total:</strong> ${totalGB} GB |
+        <span style="color: var(--success-green);">✓ Minimal data - Low cost</span>
+    `;
+    
+    let html = `
+        <div class="minimal-data-message">
+            <div class="minimal-header">
+                <span class="minimal-icon">💰</span>
+                <div>
+                    <h2>Low Data Volume - Minimal Cost</h2>
+                    <p class="subtitle">Total ingestion: <strong>${totalGB} GB</strong> over 30 days ≈ <strong>$${monthlyCost}/month</strong></p>
+                </div>
             </div>
-            <div class="summary-card">
-                <div class="value">${analysis.recommendations.length}</div>
-                <div class="label">Recommendations</div>
+            
+            <div class="recommendation-box success">
+                <h3>✅ Assessment</h3>
+                <p>Your data ingestion is <strong>very low</strong>. At this volume:</p>
+                <ul>
+                    <li>Pay-As-You-Go pricing is optimal (no commitment tier needed)</li>
+                    <li>Basic Logs wouldn't provide meaningful savings</li>
+                    <li>Default retention settings are fine</li>
+                    <li>No immediate optimization actions required</li>
+                </ul>
+            </div>
+            
+            <div class="recommendation-box info">
+                <h3>💡 When to Re-analyze</h3>
+                <p>Run this analysis again when:</p>
+                <ul>
+                    <li>Daily ingestion exceeds <strong>1 GB/day</strong></li>
+                    <li>Monthly costs exceed <strong>$100</strong></li>
+                    <li>You enable new data collection (Container Insights, VM Insights, etc.)</li>
+                </ul>
             </div>
         </div>
     `;
     
-    // Table breakdown
-    html += `<h3>📊 Data Volume by Table</h3>`;
-    html += `<table class="data-table">
-        <thead><tr><th>Table</th><th>Size (GB)</th><th>Est. Cost</th></tr></thead>
-        <tbody>`;
-    
-    Object.entries(analysis.tableBreakdown)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
-        .forEach(([table, gb]) => {
-            html += `<tr><td>${table}</td><td>${gb.toFixed(2)}</td><td>$${(gb * 2.76).toFixed(2)}</td></tr>`;
-        });
-    
-    html += `</tbody></table>`;
-    
-    // Recommendations
-    if (analysis.recommendations.length > 0) {
-        html += `<h3>💡 Recommendations</h3>`;
-        
-        analysis.recommendations.forEach(rec => {
-            html += `
-                <div class="rec-card rec-card-${rec.type}">
-                    <div class="rec-card-header">
-                        <span class="rec-card-icon">${rec.type === 'savings' ? '💰' : '⚠️'}</span>
-                        <span class="rec-card-title">${rec.title}</span>
-                        ${rec.impact ? `<span class="rec-card-impact">${rec.impact}</span>` : ''}
-                    </div>
-                    <div class="rec-card-body">
-                        ${rec.tables ? `
-                            <table class="data-table">
-                                <thead><tr><th>Table</th><th>Size (GB)</th><th>Potential Savings</th></tr></thead>
-                                <tbody>
-                                    ${rec.tables.map(([table, gb]) => 
-                                        `<tr><td>${table}</td><td>${gb.toFixed(2)}</td><td>$${(gb * 2.26).toFixed(2)}</td></tr>`
-                                    ).join('')}
-                                </tbody>
-                            </table>
-                        ` : ''}
-                        ${rec.computers ? `
-                            <p>${rec.computers.length} computer(s) sending excessive heartbeats:</p>
-                            <ul>${rec.computers.slice(0, 5).map(c => 
-                                `<li>${c.computer}: ${c.heartbeatsPerHour}/hour</li>`
-                            ).join('')}</ul>
-                        ` : ''}
-                    </div>
-                    <div class="rec-card-action">
-                        <strong>📋 Action:</strong> ${rec.action}
-                    </div>
-                </div>
-            `;
-        });
-    }
-    
-    // AI Recommendations
-    if (aiRecommendations) {
-        html += `<h3>🤖 AI Analysis</h3>`;
-        html += `<div class="rec-card rec-card-info">
-            <div class="rec-card-body">
-                <pre style="white-space: pre-wrap; font-family: inherit;">${aiRecommendations}</pre>
-            </div>
-        </div>`;
-    }
-    
     content.innerHTML = html;
+    recommendationsSection.hidden = false;
+}
+
+// Format markdown to HTML
+function formatMarkdown(text) {
+    // Process recommendation cards
+    text = text.replace(/\[CARD:(warning|savings|info|success)\]([\s\S]*?)\[\/CARD\]/g, (match, type, content) => {
+        const icons = {
+            warning: '⚠️',
+            savings: '💰',
+            info: 'ℹ️',
+            success: '✅'
+        };
+        
+        let title = '';
+        let impact = '';
+        let action = '';
+        let docs = '';
+        let body = content;
+        
+        body = body.replace(/\[TITLE\]([\s\S]*?)\[\/TITLE\]/g, (m, t) => { title = t.trim(); return ''; });
+        body = body.replace(/\[IMPACT\]([\s\S]*?)\[\/IMPACT\]/g, (m, i) => { impact = i.trim(); return ''; });
+        body = body.replace(/\[ACTION\]([\s\S]*?)\[\/ACTION\]/g, (m, a) => { action = a.trim(); return ''; });
+        body = body.replace(/\[DOCS\]([\s\S]*?)\[\/DOCS\]/g, (m, d) => { docs = d.trim(); return ''; });
+        
+        body = body.trim();
+        
+        let html = `<div class="rec-card rec-card-${type}">`;
+        html += `<div class="rec-card-header">`;
+        html += `<span class="rec-card-icon">${icons[type]}</span>`;
+        html += `<span class="rec-card-title">${title || 'Recommendation'}</span>`;
+        if (impact) html += `<span class="rec-card-impact">${impact}</span>`;
+        html += `</div>`;
+        if (body) html += `<div class="rec-card-body">${formatCardBody(body)}</div>`;
+        if (action) html += `<div class="rec-card-action"><strong>📋 Action:</strong> ${action}</div>`;
+        if (docs) html += `<div class="rec-card-docs"><a href="${docs}" target="_blank">📖 Documentation</a></div>`;
+        html += `</div>`;
+        
+        return html;
+    });
     
-    // Store for export
-    window.lastAnalysis = { analysis, aiRecommendations };
+    return text;
 }
 
-// Show error
-function showError(title, message) {
-    document.getElementById('errorSection').hidden = false;
-    document.getElementById('errorMessage').textContent = message;
-    document.getElementById('errorHelp').innerHTML = '';
+// Format card body content
+function formatCardBody(text) {
+    // Tables
+    text = text.replace(/\|(.+)\|\n\|[-:\s|]+\|\n((?:\|.+\|\n?)+)/g, (match, header, body) => {
+        const headers = header.split('|').filter(h => h.trim()).map(h => `<th>${h.trim()}</th>`).join('');
+        const rows = body.trim().split('\n').map(row => {
+            const cells = row.split('|').filter(c => c.trim() !== '').map(c => `<td>${c.trim()}</td>`).join('');
+            return `<tr>${cells}</tr>`;
+        }).join('');
+        return `<table class="ai-table"><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
+    });
+    
+    // Code blocks
+    text = text.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
+    
+    // Inline code
+    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+    
+    // Bold and italic
+    text = text.replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>');
+    text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    
+    // Lists
+    text = text.replace(/^- (.+)$/gm, '<li>$1</li>');
+    text = text.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+    
+    // Line breaks
+    text = text.split('\n').map(line => {
+        line = line.trim();
+        if (!line || line.startsWith('<')) return line;
+        return `<p>${line}</p>`;
+    }).join('');
+    
+    return text;
 }
 
-// Show admin consent error
-function showAdminConsentError() {
-    document.getElementById('errorSection').hidden = false;
-    document.getElementById('errorMessage').textContent = 
-        'Admin consent is required to access Azure resources.';
-    document.getElementById('errorHelp').innerHTML = `
-        <h4>What does this mean?</h4>
-        <p>Your organization requires an administrator to approve this app before you can use it.</p>
-        <h4>Options:</h4>
-        <ul>
-            <li>Contact your IT administrator and request they approve this app</li>
-            <li>If you have Azure CLI access, use the <a href="https://github.com/osalzberg/azure-monitor-cost-optimizer">server version</a> which uses CLI authentication</li>
-            <li>Ask your admin to grant consent at: <code>https://login.microsoftonline.com/common/adminconsent?client_id=${msalConfig.auth.clientId}</code></li>
-        </ul>
-    `;
-}
-
-// Dismiss error
-function dismissError() {
-    document.getElementById('errorSection').hidden = true;
+// Copy recommendations to clipboard
+function copyRecommendations() {
+    const content = document.getElementById('recommendationsContent');
+    const text = content.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById('copyBtn');
+        btn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Copied!
+        `;
+        setTimeout(() => {
+            btn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+                Copy
+            `;
+        }, 2000);
+    });
 }
 
 // New analysis
 function newAnalysis() {
-    document.getElementById('resultsSection').hidden = true;
-    document.getElementById('mainApp').hidden = false;
+    recommendationsSection.hidden = true;
+    inputSection.hidden = false;
 }
 
-// Copy results
-function copyResults() {
-    const content = document.getElementById('resultsContent').innerText;
-    navigator.clipboard.writeText(content);
-    alert('Results copied to clipboard!');
-}
-
-// Export results
-function exportResults() {
-    if (!window.lastAnalysis) return;
-    
-    const blob = new Blob([JSON.stringify(window.lastAnalysis, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `azure-monitor-analysis-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+// Show error message
+function showError(message) {
+    alert(message);
 }
