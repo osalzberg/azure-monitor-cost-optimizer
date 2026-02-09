@@ -377,7 +377,24 @@ Each card must have:
 
 Example title format: "💡 Basic Logs Opportunity - my-workspace-name"
 
-End with a [CARD:info] summary card listing top 3 actions by impact.
+End with a [CARD:info] summary card with this EXACT format for the top actions:
+
+[CARD:info]
+[TITLE]🔍 Summary: Top Actions by Impact[/TITLE]
+[IMPACT]Prioritized recommendations[/IMPACT]
+
+**1. [Action Name]** - [Workspace Name]
+   - Savings: ~$X/month
+   - What: Brief description
+
+**2. [Action Name]** - [Workspace Name]
+   - Savings: ~$X/month  
+   - What: Brief description
+
+**3. [Action Name]** - [Workspace Name]
+   - Savings: ~$X/month (or "minor")
+   - What: Brief description
+[/CARD]
 
 Be CONSISTENT - always check the same things, always provide the same recommendations for the same data patterns.`;
 
@@ -1377,6 +1394,9 @@ function formatMarkdown(text) {
     // Remove --- separators
     text = text.replace(/^---$/gm, '');
     text = text.replace(/\n{3,}/g, '\n\n');
+    
+    // Fix inline numbered lists (e.g., "1. foo 2. bar 3. baz" -> separate lines)
+    text = text.replace(/(\d+)\.\s+([^0-9]+?)(?=\s+\d+\.\s|$)/g, '\n$1. $2\n');
     
     // Process recommendation cards
     text = text.replace(/\[CARD:(warning|savings|info|success)\]([\s\S]*?)\[\/CARD\]/g, (match, type, content) => {
