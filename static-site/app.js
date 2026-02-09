@@ -1449,16 +1449,27 @@ function formatCardBody(text) {
     text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     text = text.replace(/\*(.*?)\*/g, '<em>$1</em>');
     
-    // Lists
-    text = text.replace(/^- (.+)$/gm, '<li>$1</li>');
-    text = text.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+    // Numbered lists (1. 2. 3.)
+    text = text.replace(/^(\d+)\.\s+(.+)$/gm, '<li value="$1">$2</li>');
+    text = text.replace(/(<li value="\d+">[^<]*<\/li>\s*)+/g, '<ol>$&</ol>');
     
-    // Line breaks
+    // Bullet lists
+    text = text.replace(/^- (.+)$/gm, '<li>$1</li>');
+    text = text.replace(/(<li>(?!value)[^<]*<\/li>\s*)+/g, match => {
+        // Only wrap in <ul> if not already in <ol>
+        if (!match.includes('value=')) return `<ul>${match}</ul>`;
+        return match;
+    });
+    
+    // Line breaks - convert remaining plain text lines to paragraphs
     text = text.split('\n').map(line => {
         line = line.trim();
-        if (!line || line.startsWith('<')) return line;
+        if (!line || line.startsWith('<') || line.match(/^<\/(ol|ul|li|p|table)/)) return line;
         return `<p>${line}</p>`;
     }).join('');
+    
+    // Clean up empty paragraphs
+    text = text.replace(/<p>\s*<\/p>/g, '');
     
     return text;
 }

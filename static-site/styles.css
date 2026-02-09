@@ -816,6 +816,20 @@ button[type="submit"]:disabled {
     margin: 8px 0;
 }
 
+.rec-card-body ol, .rec-card-body ul {
+    margin: 12px 0;
+    padding-left: 24px;
+}
+
+.rec-card-body ol li, .rec-card-body ul li {
+    margin: 8px 0;
+    padding-left: 4px;
+}
+
+.rec-card-body ol {
+    list-style-type: decimal;
+}
+
 .rec-card-body .ai-table {
     margin: 12px 0;
 }
