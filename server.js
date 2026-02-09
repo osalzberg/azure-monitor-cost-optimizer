@@ -352,10 +352,10 @@ app.post('/api/recommendations', async (req, res) => {
 app.get('/api/health', async (req, res) => {
     let azureAuthenticated = false;
     
-    if (credential) {
+    if (cliCredential) {
         try {
             // Try to get a token to verify credentials are valid
-            await credential.getToken('https://management.azure.com/.default');
+            await cliCredential.getToken('https://management.azure.com/.default');
             azureAuthenticated = true;
         } catch (e) {
             azureAuthenticated = false;
