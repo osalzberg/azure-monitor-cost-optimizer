@@ -1,10 +1,5 @@
 // Azure Monitor Cost Optimizer - Static Site Version
-// Uses Device Code Flow for authentication (no redirect URIs needed)
-
-// Azure AD Configuration
-// Using a well-known public client ID
-const CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'; // Azure CLI public client ID
-const TENANT = 'organizations'; // Multi-tenant
+// Uses token-based authentication (user provides Azure CLI token)
 
 // App state
 let accessToken = null;
@@ -52,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = JSON.parse(saved);
             if (data.expiresAt > Date.now()) {
                 accessToken = data.token;
-                onSignedIn(data.username);
+                onSignedIn(data.username || 'User');
             } else {
                 localStorage.removeItem('azureToken');
             }
@@ -62,174 +57,58 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// Sign In using Device Code Flow
-async function signIn() {
-    const btn = document.getElementById('signInBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Starting sign in...';
+// Copy the az command
+function copyCommand() {
+    const cmd = "az account get-access-token --resource https://management.azure.com --query accessToken -o tsv";
+    navigator.clipboard.writeText(cmd);
+    const btn = document.querySelector('.code-block .copy-btn');
+    btn.textContent = '✓';
+    setTimeout(() => btn.textContent = '📋', 2000);
+}
+
+// Sign in with pasted token
+function signInWithToken() {
+    const tokenInput = document.getElementById('tokenInput');
+    const token = tokenInput.value.trim();
+    
+    if (!token) {
+        showError('Please paste your access token', 'Run the az command shown above and paste the result.');
+        return;
+    }
+    
+    // Validate token format (JWT has 3 parts)
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+        showError('Invalid token format', 'The token should be a JWT (three parts separated by dots). Make sure you copied the entire token.');
+        return;
+    }
     
     try {
-        // Step 1: Get device code
-        const deviceCodeResponse = await fetch(
-            `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/devicecode`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({
-                    client_id: CLIENT_ID,
-                    scope: 'https://management.azure.com/user_impersonation https://api.loganalytics.io/Data.Read offline_access'
-                })
-            }
-        );
+        // Decode token to get expiry and username
+        const payload = JSON.parse(atob(parts[1]));
+        const exp = payload.exp * 1000; // Convert to milliseconds
         
-        if (!deviceCodeResponse.ok) {
-            throw new Error('Failed to get device code');
+        if (exp < Date.now()) {
+            showError('Token expired', 'Please generate a fresh token using the az command.');
+            return;
         }
         
-        const deviceCode = await deviceCodeResponse.json();
+        const username = payload.upn || payload.unique_name || payload.preferred_username || 'User';
         
-        // Show device code UI
-        showDeviceCodeUI(deviceCode);
+        accessToken = token;
         
-        // Step 2: Poll for token
-        await pollForToken(deviceCode);
+        // Save token
+        localStorage.setItem('azureToken', JSON.stringify({
+            token: token,
+            username: username,
+            expiresAt: exp
+        }));
         
-    } catch (error) {
-        console.error('Sign in error:', error);
-        showError('Sign in failed', error.message);
-        btn.disabled = false;
-        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
-            <polyline points="10 17 15 12 10 7"></polyline>
-            <line x1="15" y1="12" x2="3" y2="12"></line>
-        </svg> Sign In`;
+        onSignedIn(username);
+        
+    } catch (e) {
+        showError('Invalid token', 'Could not parse the token. Please make sure you copied it correctly.');
     }
-}
-
-// Show device code UI
-function showDeviceCodeUI(deviceCode) {
-    document.getElementById('welcomeSection').innerHTML = `
-        <div class="device-code-container">
-            <h2>🔐 Sign In Required</h2>
-            <p>To authenticate with your Microsoft account:</p>
-            
-            <div class="device-code-steps">
-                <div class="step">
-                    <span class="step-number">1</span>
-                    <span>Go to <a href="${deviceCode.verification_uri}" target="_blank" class="device-link">${deviceCode.verification_uri}</a></span>
-                </div>
-                <div class="step">
-                    <span class="step-number">2</span>
-                    <span>Enter this code:</span>
-                </div>
-            </div>
-            
-            <div class="device-code-display">
-                <code id="userCode">${deviceCode.user_code}</code>
-                <button class="copy-btn" onclick="copyCode()">📋 Copy</button>
-            </div>
-            
-            <p class="waiting-message">
-                <span class="spinner"></span>
-                Waiting for you to complete sign in...
-            </p>
-            
-            <button class="cancel-btn" onclick="cancelSignIn()">Cancel</button>
-        </div>
-    `;
-}
-
-// Copy code to clipboard
-function copyCode() {
-    const code = document.getElementById('userCode').textContent;
-    navigator.clipboard.writeText(code);
-    const btn = document.querySelector('.copy-btn');
-    btn.textContent = '✓ Copied!';
-    setTimeout(() => btn.textContent = '📋 Copy', 2000);
-}
-
-// Poll for token
-let pollController = null;
-
-async function pollForToken(deviceCode) {
-    const interval = deviceCode.interval * 1000 || 5000;
-    const expiresAt = Date.now() + (deviceCode.expires_in * 1000);
-    
-    pollController = new AbortController();
-    
-    while (Date.now() < expiresAt) {
-        if (pollController.signal.aborted) {
-            throw new Error('Sign in cancelled');
-        }
-        
-        await new Promise(resolve => setTimeout(resolve, interval));
-        
-        try {
-            const tokenResponse = await fetch(
-                `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({
-                        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-                        client_id: CLIENT_ID,
-                        device_code: deviceCode.device_code
-                    })
-                }
-            );
-            
-            const tokenData = await tokenResponse.json();
-            
-            if (tokenData.access_token) {
-                // Success!
-                accessToken = tokenData.access_token;
-                
-                // Decode token to get username
-                const payload = JSON.parse(atob(tokenData.access_token.split('.')[1]));
-                const username = payload.upn || payload.preferred_username || payload.email || 'User';
-                
-                // Save token
-                localStorage.setItem('azureToken', JSON.stringify({
-                    token: tokenData.access_token,
-                    username: username,
-                    expiresAt: Date.now() + (tokenData.expires_in * 1000)
-                }));
-                
-                onSignedIn(username);
-                return;
-            } else if (tokenData.error === 'authorization_pending') {
-                // Still waiting, continue polling
-                continue;
-            } else if (tokenData.error === 'authorization_declined') {
-                throw new Error('Sign in was declined');
-            } else if (tokenData.error === 'expired_token') {
-                throw new Error('Sign in code expired');
-            } else if (tokenData.error) {
-                // Check for admin consent required
-                if (tokenData.error_description?.includes('AADSTS65001') || 
-                    tokenData.error_description?.includes('admin')) {
-                    showAdminConsentError();
-                    return;
-                }
-                throw new Error(tokenData.error_description || tokenData.error);
-            }
-        } catch (e) {
-            if (e.message !== 'Sign in cancelled') {
-                console.error('Token poll error:', e);
-            }
-            throw e;
-        }
-    }
-    
-    throw new Error('Sign in timed out');
-}
-
-// Cancel sign in
-function cancelSignIn() {
-    if (pollController) {
-        pollController.abort();
-    }
-    location.reload();
 }
 
 // Sign Out
@@ -243,7 +122,6 @@ function signOut() {
 function onSignedIn(username) {
     updateStatus('connected', username);
     
-    // Reset welcome section
     document.getElementById('welcomeSection').hidden = true;
     document.getElementById('mainApp').hidden = false;
     document.getElementById('signInBtn').hidden = true;

@@ -48,16 +48,28 @@
         <section id="welcomeSection" class="card">
             <div class="welcome-content">
                 <h2>👋 Welcome!</h2>
-                <p>Sign in with your Microsoft account to analyze your Azure Log Analytics workspaces.</p>
-                <ul class="features-list">
-                    <li>🔒 Your credentials stay in your browser - no server involved</li>
-                    <li>👤 You'll only see resources you have access to</li>
-                    <li>📊 Get detailed cost analysis and optimization recommendations</li>
-                </ul>
-                <button class="primary-btn" onclick="signIn()">
-                    <img src="https://docs.microsoft.com/en-us/azure/active-directory/develop/media/howto-add-branding-in-azure-ad-apps/ms-symbollockup_mssymbol_19.svg" alt="Microsoft" width="20" height="20">
-                    Sign in with Microsoft
-                </button>
+                <p>Analyze your Azure Log Analytics workspaces and get cost optimization recommendations.</p>
+                
+                <div class="auth-options">
+                    <div class="auth-option">
+                        <h3>🔑 Sign in with Azure CLI Token</h3>
+                        <p>Run this command in your terminal to get a token:</p>
+                        <div class="code-block">
+                            <code>az account get-access-token --resource https://management.azure.com --query accessToken -o tsv</code>
+                            <button class="copy-btn" onclick="copyCommand()">📋</button>
+                        </div>
+                        <p>Then paste the token here:</p>
+                        <textarea id="tokenInput" placeholder="Paste your access token here..." rows="3"></textarea>
+                        <button class="primary-btn" onclick="signInWithToken()">
+                            Sign In with Token
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="auth-note">
+                    <p><strong>🔒 Privacy:</strong> Your token stays in your browser and is never sent to any server except Azure APIs.</p>
+                    <p><strong>💡 Tip:</strong> For the best experience, use the <a href="https://github.com/osalzberg/azure-monitor-cost-optimizer">local Node.js version</a> which handles authentication automatically.</p>
+                </div>
             </div>
         </section>
 
