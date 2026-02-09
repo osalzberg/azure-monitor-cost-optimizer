@@ -361,6 +361,14 @@ Then for each finding use:
 [CARD:success] for things already optimized
 [CARD:info] for informational items
 
+IMPORTANT - ORDER YOUR RECOMMENDATIONS BY PRIORITY:
+1. FIRST: Show [CARD:savings] items - actionable cost savings (highest $ impact first)
+2. SECOND: Show [CARD:warning] items - issues that need attention  
+3. LAST: Show [CARD:success] items - things already optimized or no action needed
+
+Do NOT lead with "everything is optimal" messages. Always show actionable recommendations first.
+If something is already optimal, mention it briefly at the END, not the beginning.
+
 Each card must have:
 - [TITLE] that includes the workspace name if workspace-specific
 - [IMPACT] (with $ amount or % savings)
