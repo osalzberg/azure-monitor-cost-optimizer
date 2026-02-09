@@ -201,6 +201,8 @@ function updateAIStatus() {
 async function getAIRecommendations(allQueryData, dataSummary, aiSettings, userContext) {
     const { endpoint, key, deployment } = aiSettings;
     
+    console.log('Using Azure OpenAI:', { endpoint, deployment, hasKey: !!key });
+    
     // Format query data for AI
     const analysisData = formatQueryDataForAI(allQueryData, dataSummary);
     
@@ -240,7 +242,11 @@ ${userContext ? `## User Context\n${userContext}` : ''}
 Provide specific, actionable recommendations with estimated cost savings where possible.`;
 
     try {
-        const response = await fetch(`${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=2024-02-01`, {
+        console.log('Calling Azure OpenAI API...');
+        const apiUrl = `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=2024-02-01`;
+        console.log('API URL:', apiUrl);
+        
+        const response = await fetch(apiUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -257,11 +263,14 @@ Provide specific, actionable recommendations with estimated cost savings where p
         });
         
         if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error?.message || `HTTP ${response.status}`);
+            const errorText = await response.text();
+            console.error('AI API error response:', errorText);
+            const error = JSON.parse(errorText).error || {};
+            throw new Error(error.message || `HTTP ${response.status}`);
         }
         
         const data = await response.json();
+        console.log('AI response received successfully');
         return data.choices[0].message.content;
         
     } catch (error) {
@@ -680,6 +689,8 @@ async function runAnalysis() {
         // Check if we got any actual data
         const dataSummary = summarizeQueryData(allQueryData);
         
+        console.log('Data summary:', dataSummary);
+        
         // If no data, show helpful message
         if (dataSummary.totalWorkspaces === 0 || dataSummary.workspacesWithData === 0) {
             progressSection.hidden = true;
@@ -696,16 +707,24 @@ async function runAnalysis() {
         
         // Check if AI is configured
         const aiSettings = getAISettings();
+        console.log('AI Settings:', { 
+            hasEndpoint: !!aiSettings.endpoint, 
+            hasKey: !!aiSettings.key, 
+            deployment: aiSettings.deployment 
+        });
+        
         let recommendations;
         
         if (aiSettings.endpoint && aiSettings.key) {
             // Use Azure OpenAI
-            updateProgress('progressAI', 'running', 'Generating AI recommendations...');
+            console.log('Using Azure OpenAI for recommendations');
+            updateProgress('progressAI', 'running', 'Generating AI recommendations (using Azure OpenAI)...');
             const context = document.getElementById('context').value;
             recommendations = await getAIRecommendations(allQueryData, dataSummary, aiSettings, context);
         } else {
             // Fallback to rule-based recommendations
-            updateProgress('progressAI', 'running', 'Generating recommendations...');
+            console.log('AI not configured, using rule-based recommendations');
+            updateProgress('progressAI', 'running', 'Generating recommendations (rule-based)...');
             recommendations = generateRecommendations(allQueryData, dataSummary);
         }
         
@@ -723,14 +742,15 @@ async function runAnalysis() {
     }
 }
 
-// Query a workspace using Log Analytics API
+// Query a workspace using Azure Resource Manager API (works with management token)
 async function queryWorkspace(workspace) {
     const results = {};
     
     for (const [queryName, query] of Object.entries(analysisQueries)) {
         try {
+            // Use ARM endpoint which accepts management.azure.com token
             const response = await fetch(
-                `https://api.loganalytics.io/v1/workspaces/${workspace.id}/query`,
+                `https://management.azure.com${workspace.resourceId}/query?api-version=2017-10-01`,
                 {
                     method: 'POST',
                     headers: {
@@ -742,6 +762,8 @@ async function queryWorkspace(workspace) {
             );
             
             if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`Query ${queryName} failed:`, response.status, errorText);
                 results[queryName] = { error: `HTTP ${response.status}`, rows: [], columns: [] };
                 continue;
             }
@@ -758,6 +780,7 @@ async function queryWorkspace(workspace) {
                 results[queryName] = { rows: [], columns: [] };
             }
         } catch (error) {
+            console.error(`Query ${queryName} error:`, error);
             results[queryName] = { error: error.message, rows: [], columns: [] };
         }
     }
