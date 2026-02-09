@@ -1,12 +1,12 @@
 // Azure Monitor Cost Optimizer - Backend Server
-// Uses Azure CLI credentials to query Log Analytics
+// Supports both Azure CLI and Device Code Flow authentication
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
 
-const { AzureCliCredential } = require('@azure/identity');
+const { AzureCliCredential, DeviceCodeCredential } = require('@azure/identity');
 const { SubscriptionClient } = require('@azure/arm-subscriptions');
 const { OperationalInsightsManagementClient } = require('@azure/arm-operationalinsights');
 const { LogsQueryClient } = require('@azure/monitor-query');
@@ -35,33 +35,153 @@ const AZURE_OPENAI_CONFIG = {
     }
 };
 
-// Azure credential - uses Azure CLI
-let credential = null;
-let logsQueryClient = null;
+// Azure AD Configuration
+const AZURE_AD_CLIENT_ID = process.env.AZURE_AD_CLIENT_ID || '424384d7-e177-491c-aa56-365b4581f0d3';
+const AZURE_AD_TENANT_ID = process.env.AZURE_AD_TENANT_ID || '72f988bf-86f1-41af-91ab-2d7cd011db47'; // Microsoft tenant
 
-// Initialize Azure credentials
-async function initializeAzure() {
+// Session storage for user credentials (in production, use proper session management)
+const userSessions = new Map();
+
+// Azure credential - uses Azure CLI as fallback
+let cliCredential = null;
+let cliLogsQueryClient = null;
+
+// Initialize Azure CLI credentials (fallback)
+async function initializeAzureCli() {
     try {
-        // Use Azure CLI credential (from 'az login')
-        credential = new AzureCliCredential();
-        logsQueryClient = new LogsQueryClient(credential);
-        console.log('✅ Azure CLI credentials initialized');
+        cliCredential = new AzureCliCredential();
+        cliLogsQueryClient = new LogsQueryClient(cliCredential);
+        console.log('✅ Azure CLI credentials initialized (fallback)');
         return true;
     } catch (error) {
-        console.error('❌ Failed to initialize Azure credentials:', error.message);
-        console.log('Please run "az login" to authenticate');
+        console.log('ℹ️ Azure CLI not available - device code auth required');
         return false;
     }
+}
+
+// Device Code Flow - Start authentication
+app.post('/api/auth/device-code', async (req, res) => {
+    const sessionId = req.body.sessionId || generateSessionId();
+    
+    try {
+        let deviceCodeInfo = null;
+        
+        const credential = new DeviceCodeCredential({
+            tenantId: AZURE_AD_TENANT_ID,
+            clientId: AZURE_AD_CLIENT_ID,
+            userPromptCallback: (info) => {
+                deviceCodeInfo = {
+                    userCode: info.userCode,
+                    verificationUri: info.verificationUri,
+                    message: info.message
+                };
+            }
+        });
+        
+        // Start the auth flow - this will trigger the callback
+        const tokenPromise = credential.getToken('https://management.azure.com/.default');
+        
+        // Wait a moment for the callback to fire
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        if (deviceCodeInfo) {
+            // Store the credential and promise for later
+            userSessions.set(sessionId, {
+                credential,
+                tokenPromise,
+                status: 'pending',
+                createdAt: Date.now()
+            });
+            
+            res.json({
+                sessionId,
+                ...deviceCodeInfo
+            });
+        } else {
+            res.status(500).json({ error: 'Failed to get device code' });
+        }
+    } catch (error) {
+        console.error('Device code error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Device Code Flow - Check authentication status
+app.get('/api/auth/status/:sessionId', async (req, res) => {
+    const { sessionId } = req.params;
+    const session = userSessions.get(sessionId);
+    
+    if (!session) {
+        return res.json({ status: 'not_found' });
+    }
+    
+    if (session.status === 'authenticated') {
+        return res.json({ status: 'authenticated' });
+    }
+    
+    // Check if token promise has resolved
+    try {
+        const token = await Promise.race([
+            session.tokenPromise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000))
+        ]);
+        
+        // Authentication successful!
+        session.status = 'authenticated';
+        session.logsQueryClient = new LogsQueryClient(session.credential);
+        userSessions.set(sessionId, session);
+        
+        res.json({ status: 'authenticated' });
+    } catch (error) {
+        if (error.message === 'timeout') {
+            res.json({ status: 'pending' });
+        } else {
+            res.json({ status: 'error', error: error.message });
+        }
+    }
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+    const { sessionId } = req.body;
+    if (sessionId) {
+        userSessions.delete(sessionId);
+    }
+    res.json({ success: true });
+});
+
+// Helper to get credential for a request
+function getCredentialForRequest(req) {
+    const sessionId = req.headers['x-session-id'];
+    
+    if (sessionId) {
+        const session = userSessions.get(sessionId);
+        if (session && session.status === 'authenticated') {
+            return { credential: session.credential, logsQueryClient: session.logsQueryClient };
+        }
+    }
+    
+    // Fallback to CLI credential
+    if (cliCredential) {
+        return { credential: cliCredential, logsQueryClient: cliLogsQueryClient };
+    }
+    
+    return null;
+}
+
+function generateSessionId() {
+    return 'sess_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
 // Get list of subscriptions
 app.get('/api/subscriptions', async (req, res) => {
     try {
-        if (!credential) {
-            return res.status(401).json({ error: 'Not authenticated. Please run "az login"' });
+        const creds = getCredentialForRequest(req);
+        if (!creds) {
+            return res.status(401).json({ error: 'Not authenticated. Please sign in.' });
         }
 
-        const subscriptionClient = new SubscriptionClient(credential);
+        const subscriptionClient = new SubscriptionClient(creds.credential);
         const subscriptions = [];
         
         for await (const sub of subscriptionClient.subscriptions.list()) {
@@ -82,12 +202,13 @@ app.get('/api/subscriptions', async (req, res) => {
 // Get workspaces for a subscription
 app.get('/api/subscriptions/:subscriptionId/workspaces', async (req, res) => {
     try {
-        if (!credential) {
-            return res.status(401).json({ error: 'Not authenticated. Please run "az login"' });
+        const creds = getCredentialForRequest(req);
+        if (!creds) {
+            return res.status(401).json({ error: 'Not authenticated. Please sign in.' });
         }
 
         const { subscriptionId } = req.params;
-        const opsClient = new OperationalInsightsManagementClient(credential, subscriptionId);
+        const opsClient = new OperationalInsightsManagementClient(creds.credential, subscriptionId);
         const workspaces = [];
 
         for await (const ws of opsClient.workspaces.list()) {
@@ -111,8 +232,9 @@ app.get('/api/subscriptions/:subscriptionId/workspaces', async (req, res) => {
 // Run KQL queries against a workspace
 app.post('/api/query', async (req, res) => {
     try {
-        if (!logsQueryClient) {
-            return res.status(401).json({ error: 'Not authenticated. Please run "az login"' });
+        const creds = getCredentialForRequest(req);
+        if (!creds || !creds.logsQueryClient) {
+            return res.status(401).json({ error: 'Not authenticated. Please sign in.' });
         }
 
         const { workspaceId, queries } = req.body;
@@ -127,7 +249,7 @@ app.post('/api/query', async (req, res) => {
         for (const [name, query] of Object.entries(queries)) {
             try {
                 console.log(`Running query: ${name}`);
-                const result = await logsQueryClient.queryWorkspace(workspaceId, query, timespan);
+                const result = await creds.logsQueryClient.queryWorkspace(workspaceId, query, timespan);
                 
                 if (result.status === 'Success' || result.status === 'PartialFailure') {
                     const table = result.tables[0];
@@ -323,12 +445,13 @@ ${analysisData || 'No analysis data available'}
 
 // Start server
 async function start() {
-    await initializeAzure();
+    await initializeAzureCli();
     
     app.listen(PORT, () => {
         console.log(`🚀 Server running on http://localhost:${PORT}`);
         console.log(`📊 Models: Model1=${!!AZURE_OPENAI_CONFIG.model1.apiKey}, Model2=${!!AZURE_OPENAI_CONFIG.model2.apiKey}`);
-        console.log(`💡 Make sure you're logged in: az login`);
+        console.log(`🔐 Auth: CLI=${!!cliCredential}, DeviceCode=enabled`);
+        console.log(`💡 Users can sign in via Device Code Flow or use 'az login' locally`);
     });
 }
 

@@ -1275,3 +1275,142 @@ footer a:hover {
 .recommendations-section:not([hidden]) {
     animation: fadeInUp 0.5s ease-out;
 }
+/* Device Code Flow UI */
+.device-code-ui {
+    text-align: center;
+    padding: 10px;
+}
+
+.device-code-ui h3 {
+    margin-bottom: 10px;
+    font-size: 1.3rem;
+}
+
+.device-code-steps {
+    text-align: left;
+    max-width: 400px;
+    margin: 20px auto;
+}
+
+.device-code-steps .step {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.step-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    font-weight: 600;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+
+.device-link {
+    color: var(--azure-cyan);
+    font-weight: 500;
+}
+
+.device-code-display {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    margin: 25px 0;
+}
+
+.device-code-display code {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: 4px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 15px 30px;
+    border-radius: 8px;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.copy-code-btn {
+    padding: 10px 15px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+}
+
+.copy-code-btn:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.device-code-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    opacity: 0.9;
+    font-size: 0.95rem;
+    margin-top: 20px;
+}
+
+.spinner-small {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.loading-spinner-small {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.cancel-auth-btn {
+    margin-top: 25px;
+    padding: 10px 25px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: rgba(255, 255, 255, 0.8);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.cancel-auth-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.auth-btn.primary {
+    background: var(--azure-blue);
+    border-color: var(--azure-blue);
+    padding: 12px 25px;
+    font-size: 1rem;
+    margin-top: 15px;
+}
+
+.auth-btn.primary:hover {
+    background: var(--azure-dark);
+    border-color: var(--azure-dark);
+}

@@ -1,10 +1,12 @@
 // Azure Monitor Cost Optimizer - Frontend App
-// Uses server-side Azure CLI authentication
+// Supports Device Code Flow and Azure CLI authentication
 
 // Store current workspace data
 let currentWorkspaces = [];
 let allSubscriptions = [];
 let selectedWorkspaces = []; // Changed to array for multi-select
+let sessionId = localStorage.getItem('azureSessionId') || null;
+let authCheckInterval = null;
 
 // DOM elements
 const authRequiredSection = document.getElementById('authRequiredSection');
@@ -26,26 +28,47 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupEventListeners();
 });
 
-// Check if Azure CLI is authenticated
+// Add session header to all API requests
+function apiHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (sessionId) {
+        headers['X-Session-Id'] = sessionId;
+    }
+    return headers;
+}
+
+// Check if Azure is authenticated (CLI or Device Code session)
 async function checkAzureConnection() {
     try {
         statusIndicator.className = 'status-indicator checking';
-        statusText.textContent = 'Checking Azure CLI...';
+        statusText.textContent = 'Checking authentication...';
         
+        // First check if we have a valid session
+        if (sessionId) {
+            const statusRes = await fetch(`/api/auth/status/${sessionId}`);
+            const status = await statusRes.json();
+            if (status.status === 'authenticated') {
+                onAuthenticated();
+                return;
+            } else if (status.status !== 'pending') {
+                // Session invalid, clear it
+                sessionId = null;
+                localStorage.removeItem('azureSessionId');
+            }
+        }
+        
+        // Check CLI/health
         const response = await fetch('/api/health');
         const health = await response.json();
         
         if (health.azureAuthenticated) {
-            statusIndicator.className = 'status-indicator connected';
-            statusText.textContent = 'Connected to Azure';
-            authRequiredSection.hidden = true;
-            inputSection.hidden = false;
-            await loadSubscriptions();
+            onAuthenticated();
         } else {
             statusIndicator.className = 'status-indicator disconnected';
             statusText.textContent = 'Not authenticated';
             authRequiredSection.hidden = false;
             inputSection.hidden = true;
+            showDeviceCodeButton();
         }
     } catch (error) {
         console.error('Error checking Azure connection:', error);
@@ -53,7 +76,218 @@ async function checkAzureConnection() {
         statusText.textContent = 'Connection error';
         authRequiredSection.hidden = false;
         inputSection.hidden = true;
+        showDeviceCodeButton();
     }
+}
+
+// Show Device Code authentication button
+function showDeviceCodeButton() {
+    const authContent = authRequiredSection.querySelector('.auth-content');
+    if (authContent && !document.getElementById('deviceCodeBtn')) {
+        const existingMsg = authContent.querySelector('p');
+        if (existingMsg) {
+            existingMsg.innerHTML = `
+                <strong>Sign in to access your Azure resources</strong><br>
+                <span style="font-size: 0.9em; opacity: 0.9;">You'll be redirected to Microsoft's sign-in page to authenticate.</span>
+            `;
+        }
+        
+        const btn = document.createElement('button');
+        btn.id = 'deviceCodeBtn';
+        btn.className = 'auth-btn primary';
+        btn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                <polyline points="10 17 15 12 10 7"></polyline>
+                <line x1="15" y1="12" x2="3" y2="12"></line>
+            </svg>
+            Sign In with Microsoft
+        `;
+        btn.onclick = startDeviceCodeFlow;
+        authContent.appendChild(btn);
+    }
+}
+
+// Start Device Code Flow
+async function startDeviceCodeFlow() {
+    const btn = document.getElementById('deviceCodeBtn');
+    btn.disabled = true;
+    btn.innerHTML = `<span class="loading-spinner-small"></span> Initiating sign in...`;
+    
+    try {
+        const response = await fetch('/api/auth/device-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        sessionId = data.sessionId;
+        localStorage.setItem('azureSessionId', sessionId);
+        
+        // Show the device code UI
+        showDeviceCodeUI(data);
+        
+    } catch (error) {
+        console.error('Device code error:', error);
+        btn.disabled = false;
+        btn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                <polyline points="10 17 15 12 10 7"></polyline>
+                <line x1="15" y1="12" x2="3" y2="12"></line>
+            </svg>
+            Sign In with Microsoft
+        `;
+        showError('Failed to start authentication: ' + error.message);
+    }
+}
+
+// Show Device Code UI
+function showDeviceCodeUI(data) {
+    const authContent = authRequiredSection.querySelector('.auth-content');
+    authContent.innerHTML = `
+        <div class="device-code-ui">
+            <h3>🔐 Sign In Required</h3>
+            <p>To authenticate, follow these steps:</p>
+            
+            <div class="device-code-steps">
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <span>Go to <a href="${data.verificationUri}" target="_blank" class="device-link">${data.verificationUri}</a></span>
+                </div>
+                <div class="step">
+                    <span class="step-number">2</span>
+                    <span>Enter this code:</span>
+                </div>
+            </div>
+            
+            <div class="device-code-display">
+                <code id="deviceCode">${data.userCode}</code>
+                <button class="copy-code-btn" onclick="copyDeviceCode()">📋 Copy</button>
+            </div>
+            
+            <p class="device-code-hint">
+                <span class="spinner-small"></span>
+                Waiting for you to complete sign in...
+            </p>
+            
+            <button class="cancel-auth-btn" onclick="cancelDeviceCodeFlow()">Cancel</button>
+        </div>
+    `;
+    
+    // Start polling for authentication status
+    authCheckInterval = setInterval(checkAuthStatus, 2000);
+}
+
+// Copy device code to clipboard
+window.copyDeviceCode = function() {
+    const code = document.getElementById('deviceCode').textContent;
+    navigator.clipboard.writeText(code);
+    const btn = document.querySelector('.copy-code-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => btn.textContent = '📋 Copy', 2000);
+};
+
+// Cancel device code flow
+window.cancelDeviceCodeFlow = function() {
+    if (authCheckInterval) {
+        clearInterval(authCheckInterval);
+        authCheckInterval = null;
+    }
+    sessionId = null;
+    localStorage.removeItem('azureSessionId');
+    
+    // Reset auth UI
+    const authContent = authRequiredSection.querySelector('.auth-content');
+    authContent.innerHTML = `<p></p>`;
+    showDeviceCodeButton();
+};
+
+// Check authentication status
+async function checkAuthStatus() {
+    if (!sessionId) return;
+    
+    try {
+        const response = await fetch(`/api/auth/status/${sessionId}`);
+        const data = await response.json();
+        
+        if (data.status === 'authenticated') {
+            clearInterval(authCheckInterval);
+            authCheckInterval = null;
+            onAuthenticated();
+        } else if (data.status === 'error') {
+            clearInterval(authCheckInterval);
+            authCheckInterval = null;
+            showError('Authentication failed: ' + data.error);
+            cancelDeviceCodeFlow();
+        }
+    } catch (error) {
+        console.error('Auth status check error:', error);
+    }
+}
+
+// Called when user is authenticated
+function onAuthenticated() {
+    statusIndicator.className = 'status-indicator connected';
+    statusText.textContent = 'Connected to Azure';
+    authRequiredSection.hidden = true;
+    inputSection.hidden = false;
+    
+    // Show logout button
+    showLogoutButton();
+    
+    loadSubscriptions();
+}
+
+// Show logout button
+function showLogoutButton() {
+    const authSection = document.querySelector('.auth-section');
+    if (authSection && !document.getElementById('logoutBtn')) {
+        const btn = document.createElement('button');
+        btn.id = 'logoutBtn';
+        btn.className = 'auth-btn';
+        btn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16 17 21 12 16 7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            Sign Out
+        `;
+        btn.onclick = logout;
+        authSection.appendChild(btn);
+    }
+}
+
+// Logout
+async function logout() {
+    if (sessionId) {
+        await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId })
+        });
+    }
+    sessionId = null;
+    localStorage.removeItem('azureSessionId');
+    
+    // Remove logout button
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) logoutBtn.remove();
+    
+    // Reset UI
+    authRequiredSection.hidden = false;
+    inputSection.hidden = true;
+    const authContent = authRequiredSection.querySelector('.auth-content');
+    authContent.innerHTML = `<p></p>`;
+    showDeviceCodeButton();
+    checkAzureConnection();
 }
 
 // Load subscriptions from the server
@@ -63,9 +297,15 @@ async function loadSubscriptions() {
         subscriptionSelect.disabled = true;
         subscriptionFilter.disabled = true;
         
-        const response = await fetch('/api/subscriptions');
+        const response = await fetch('/api/subscriptions', {
+            headers: apiHeaders()
+        });
         
         if (!response.ok) {
+            if (response.status === 401) {
+                logout();
+                return;
+            }
             throw new Error('Failed to load subscriptions');
         }
         
@@ -78,7 +318,7 @@ async function loadSubscriptions() {
     } catch (error) {
         console.error('Error loading subscriptions:', error);
         subscriptionSelect.innerHTML = '<option value="">Error loading subscriptions</option>';
-        showError('Failed to load subscriptions. Make sure you\'re logged in with "az login".');
+        showError('Failed to load subscriptions. Please sign in again.');
     }
 }
 
@@ -116,9 +356,15 @@ async function loadWorkspaces(subscriptionId) {
     try {
         workspaceList.innerHTML = '<div class="workspace-placeholder">Loading workspaces...</div>';
         
-        const response = await fetch(`/api/subscriptions/${subscriptionId}/workspaces`);
+        const response = await fetch(`/api/subscriptions/${subscriptionId}/workspaces`, {
+            headers: apiHeaders()
+        });
         
         if (!response.ok) {
+            if (response.status === 401) {
+                logout();
+                return;
+            }
             throw new Error('Failed to load workspaces');
         }
         
@@ -452,7 +698,7 @@ async function runAnalysis() {
             
             const queryResults = await fetch('/api/query', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: apiHeaders(),
                 body: JSON.stringify({
                     workspaceId: ws.id,
                     queries: analysisQueries
@@ -510,7 +756,7 @@ async function runAnalysis() {
         
         const aiResponse = await fetch('/api/recommendations', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: apiHeaders(),
             body: JSON.stringify({
                 workspaceName: totalWorkspaces > 1 ? `Multiple (${totalWorkspaces})` : workspacesToAnalyze[0].name,
                 workspaceConfig: totalWorkspaces > 1 
