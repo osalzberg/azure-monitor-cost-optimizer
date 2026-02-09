@@ -1125,10 +1125,19 @@ function showRecommendations(recommendations, workspaces, dataSummary) {
     const resourceInfo = document.getElementById('resourceInfo');
     
     const totalGB = dataSummary.totalIngestionGB.toFixed(2);
+    const monthlyCost = (dataSummary.totalIngestionGB * 2.76).toFixed(2);
+    
+    // Build workspace list by RG
+    let wsDetails = '';
+    for (const [rgName, rgData] of Object.entries(dataSummary.byResourceGroup)) {
+        const wsNames = rgData.workspaces.map(w => w.name).join(', ');
+        wsDetails += `<div class="info-item"><span class="label">${rgName}:</span> <span class="value">${wsNames}</span></div>`;
+    }
+    
     resourceInfo.innerHTML = `
-        <strong>Workspaces:</strong> ${dataSummary.workspacesWithData}/${dataSummary.totalWorkspaces} with data | 
-        <strong>Total Ingestion:</strong> ${totalGB} GB (30 days) |
-        <strong>Resource Groups:</strong> ${Object.keys(dataSummary.byResourceGroup).length}
+        <div class="info-item"><span class="label">Total Ingestion:</span> <span class="value">${totalGB} GB/month (~$${monthlyCost})</span></div>
+        <div class="info-item"><span class="label">Workspaces:</span> <span class="value">${dataSummary.workspacesWithData} analyzed</span></div>
+        ${wsDetails}
     `;
     
     const content = document.getElementById('recommendationsContent');
@@ -1251,6 +1260,10 @@ function showMinimalDataResults(workspaces, dataSummary) {
 
 // Format markdown to HTML
 function formatMarkdown(text) {
+    // Remove --- separators
+    text = text.replace(/^---$/gm, '');
+    text = text.replace(/\n{3,}/g, '\n\n');
+    
     // Process recommendation cards
     text = text.replace(/\[CARD:(warning|savings|info|success)\]([\s\S]*?)\[\/CARD\]/g, (match, type, content) => {
         const icons = {
@@ -1286,6 +1299,15 @@ function formatMarkdown(text) {
         
         return html;
     });
+    
+    // Handle any [ACTION] tags outside of cards
+    text = text.replace(/\[ACTION\]([^\[]+)/g, '<div class="standalone-action"><strong>📋 Action:</strong> $1</div>');
+    
+    // Handle any [DOCS] tags outside of cards - convert to clickable link
+    text = text.replace(/\[DOCS\](https?:\/\/[^\s\[]+)/g, '<div class="standalone-docs"><a href="$1" target="_blank">📖 $1</a></div>');
+    
+    // Clean up any remaining empty lines
+    text = text.replace(/\n\s*\n\s*\n/g, '\n\n');
     
     return text;
 }
