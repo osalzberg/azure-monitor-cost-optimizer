@@ -341,7 +341,7 @@ ALWAYS analyze and report on ALL of these areas in order:
 - If < 50 GB/day: Pay-as-you-go is optimal
 - Calculate exact savings: (daily_gb * 30 * $2.76) vs commitment tier price
 
-## 2. BASIC LOGS CANDIDATES (REQUIRED) - CHECK ALERTS AND QUERY FREQUENCY FIRST!
+## 2. BASIC LOGS CANDIDATES (REQUIRED) - CHECK ALERTS, DASHBOARDS, AND QUERY FREQUENCY FIRST!
 ⚠️ CRITICAL: Basic Logs have major limitations:
 - Cannot be used in dashboards, workbooks, or alert rules
 - Limited KQL operators supported
@@ -353,9 +353,14 @@ ALWAYS analyze and report on ALL of these areas in order:
 - Converting these tables would BREAK existing alerts
 - This is the #1 priority check - alert breakage is critical
 
+**SECOND, CHECK "Tables Used in Dashboards":**
+- If a table is listed in "Tables Used in Dashboards" → NEVER recommend Basic Logs
+- Converting these tables would BREAK existing Azure Dashboards
+- Dashboard tiles would fail to load data
+
 **THEN, CHECK the "Table Query Frequency" data:**
 - If a table is queried MORE than 5 times/day on average → DO NOT recommend Basic Logs
-- If a table has multiple distinct users querying it → likely used in dashboards, DO NOT recommend
+- If a table has multiple distinct users querying it → likely used in other dashboards/workbooks, DO NOT recommend
 - Only recommend Basic Logs for tables that are RARELY queried (debugging/auditing purposes)
 
 **If LAQueryLogs is NOT enabled:**
@@ -654,6 +659,20 @@ function formatQueryDataForAI(allQueryData, dataSummary) {
             formatted += `- **${table}**: Used in ${alerts.length} alert(s) - ${alertNames.join(', ')}${alerts.length > 3 ? '...' : ''}\n`;
         });
         formatted += '\n⚠️ Converting these to Basic Logs would BREAK existing alerts!\n\n';
+    }
+    
+    // Tables used in dashboards
+    if (dataSummary.tablesInDashboards?.length > 0) {
+        formatted += '\n### 📊 Tables Used in Dashboards (NEVER use Basic Logs)\n';
+        formatted += 'These tables are used in Azure Dashboards and MUST remain on Analytics tier:\n\n';
+        dataSummary.tablesInDashboards.forEach(table => {
+            const dashboards = (dataSummary.dashboardDetails || []).filter(d => 
+                d.tables.some(t => t.toLowerCase() === table.toLowerCase())
+            );
+            const dashNames = dashboards.map(d => d.displayName || d.name).slice(0, 3);
+            formatted += `- **${table}**: Used in ${dashboards.length} dashboard(s) - ${dashNames.join(', ')}${dashboards.length > 3 ? '...' : ''}\n`;
+        });
+        formatted += '\n⚠️ Converting these to Basic Logs would BREAK existing dashboards!\n\n';
     }
     
     return formatted;
@@ -1037,17 +1056,30 @@ async function runAnalysis() {
             updateProgress('progressAdvisor', 'complete', 'Advisor recommendations unavailable');
         }
         
-        // Step 2.5: Fetch scheduled query rules (alerts) to detect tables used in alerts
-        updateProgress('progressAdvisor', 'running', 'Detecting tables used in alerts...');
+        // Step 2.5: Fetch scheduled query rules (alerts) and dashboards to detect table usage
+        updateProgress('progressAdvisor', 'running', 'Detecting tables used in alerts & dashboards...');
         let alertTablesInfo = { tablesInAlerts: [], alertDetails: [] };
+        let dashboardTablesInfo = { tablesInDashboards: [], dashboardDetails: [] };
         try {
-            alertTablesInfo = await fetchScheduledQueryRules(selectedWorkspaces);
-            if (alertTablesInfo.tablesInAlerts.length > 0) {
+            // Fetch alerts and dashboards in parallel
+            const [alertResults, dashboardResults] = await Promise.all([
+                fetchScheduledQueryRules(selectedWorkspaces),
+                fetchDashboardTables(selectedWorkspaces)
+            ]);
+            alertTablesInfo = alertResults;
+            dashboardTablesInfo = dashboardResults;
+            
+            const totalBlockedTables = new Set([
+                ...alertTablesInfo.tablesInAlerts,
+                ...dashboardTablesInfo.tablesInDashboards
+            ]).size;
+            
+            if (totalBlockedTables > 0) {
                 updateProgress('progressAdvisor', 'complete', 
-                    `Found ${advisorRecommendations.length} Advisor rec(s), ${alertTablesInfo.tablesInAlerts.length} tables in alerts`);
+                    `Found ${advisorRecommendations.length} Advisor rec(s), ${totalBlockedTables} tables in alerts/dashboards`);
             }
         } catch (e) {
-            console.warn('Could not fetch scheduled query rules:', e);
+            console.warn('Could not fetch alerts/dashboards:', e);
         }
         
         // Check if we got any actual data
@@ -1055,6 +1087,8 @@ async function runAnalysis() {
         dataSummary.advisorRecommendations = advisorRecommendations;
         dataSummary.tablesInAlerts = alertTablesInfo.tablesInAlerts;
         dataSummary.alertDetails = alertTablesInfo.alertDetails;
+        dataSummary.tablesInDashboards = dashboardTablesInfo.tablesInDashboards;
+        dataSummary.dashboardDetails = dashboardTablesInfo.dashboardDetails;
         
         console.log('Data summary:', dataSummary);
         
@@ -1288,6 +1322,126 @@ async function fetchScheduledQueryRules(workspaces) {
     
     console.log(`Alert Detection: Found ${tablesInAlerts.size} tables used in ${alertDetails.length} alert rules`);
     return { tablesInAlerts: Array.from(tablesInAlerts), alertDetails };
+}
+
+// ============ DASHBOARD DETECTION ============
+// Fetches Azure Dashboards to identify tables used in dashboard tiles (cannot use Basic Logs)
+async function fetchDashboardTables(workspaces) {
+    const tablesInDashboards = new Set();
+    const dashboardDetails = [];
+    
+    // Get workspace resource IDs for matching
+    const workspaceResourceIds = workspaces.map(ws => ws.resourceId.toLowerCase());
+    const workspaceIds = workspaces.map(ws => ws.id.toLowerCase()); // customerId
+    
+    // Get unique subscription IDs from workspaces
+    const subscriptionIds = [...new Set(workspaces.map(ws => {
+        const match = ws.resourceId.match(/\/subscriptions\/([^\/]+)/);
+        return match ? match[1] : null;
+    }).filter(Boolean))];
+    
+    for (const subscriptionId of subscriptionIds) {
+        try {
+            // Fetch Azure Dashboards
+            const response = await fetch(
+                `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Portal/dashboards?api-version=2020-09-01-preview`,
+                {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                }
+            );
+            
+            if (!response.ok) {
+                console.warn(`Dashboards API returned ${response.status}`);
+                continue;
+            }
+            
+            const data = await response.json();
+            const dashboards = data.value || [];
+            
+            for (const dashboard of dashboards) {
+                const props = dashboard.properties || {};
+                const lenses = props.lenses || [];
+                const dashboardTables = new Set();
+                
+                // Parse each lens (dashboard section)
+                for (const lens of Object.values(lenses)) {
+                    const parts = lens.parts || {};
+                    
+                    for (const part of Object.values(parts)) {
+                        const metadata = part.metadata || {};
+                        
+                        // Check for Log Analytics query tiles
+                        if (metadata.type === 'Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart' ||
+                            metadata.type === 'Extension/Microsoft_Azure_Monitoring_Logs/PartType/LogsDashboardPart' ||
+                            metadata.type?.includes('LogsDashboardPart') ||
+                            metadata.type?.includes('AnalyticsPart')) {
+                            
+                            // Check if this tile targets one of our workspaces
+                            const inputs = metadata.inputs || [];
+                            let targetsOurWorkspace = false;
+                            let query = '';
+                            
+                            for (const input of inputs) {
+                                if (input.name === 'resourceIds' || input.name === 'workspaceResourceId') {
+                                    const resourceIds = Array.isArray(input.value) ? input.value : [input.value];
+                                    targetsOurWorkspace = resourceIds.some(rid => 
+                                        workspaceResourceIds.some(wsId => 
+                                            (rid || '').toLowerCase().includes(wsId) || wsId.includes((rid || '').toLowerCase())
+                                        )
+                                    );
+                                }
+                                if (input.name === 'query') {
+                                    query = input.value || '';
+                                }
+                            }
+                            
+                            // Also check settings object
+                            const settings = metadata.settings || {};
+                            if (settings.content?.query) {
+                                query = settings.content.query;
+                            }
+                            if (settings.content?.resourceIds) {
+                                const resourceIds = settings.content.resourceIds;
+                                targetsOurWorkspace = targetsOurWorkspace || resourceIds.some(rid =>
+                                    workspaceResourceIds.some(wsId =>
+                                        (rid || '').toLowerCase().includes(wsId) || wsId.includes((rid || '').toLowerCase())
+                                    )
+                                );
+                            }
+                            
+                            if (query && targetsOurWorkspace) {
+                                const tables = extractTablesFromQuery(query);
+                                tables.forEach(t => {
+                                    tablesInDashboards.add(t);
+                                    dashboardTables.add(t);
+                                });
+                            }
+                        }
+                        
+                        // Check for Workbook tiles
+                        if (metadata.type?.includes('WorkbookPart')) {
+                            // Workbooks are more complex - we note there are workbooks but can't easily parse them
+                            console.log('Dashboard contains workbook reference - may have additional table dependencies');
+                        }
+                    }
+                }
+                
+                if (dashboardTables.size > 0) {
+                    dashboardDetails.push({
+                        name: dashboard.name,
+                        displayName: props.metadata?.name || dashboard.name,
+                        tables: Array.from(dashboardTables),
+                        resourceGroup: extractResourceGroup(dashboard.id)
+                    });
+                }
+            }
+        } catch (error) {
+            console.error(`Error fetching dashboards:`, error);
+        }
+    }
+    
+    console.log(`Dashboard Detection: Found ${tablesInDashboards.size} tables used in ${dashboardDetails.length} dashboard(s)`);
+    return { tablesInDashboards: Array.from(tablesInDashboards), dashboardDetails };
 }
 
 // Extract table names from a KQL query
@@ -1579,12 +1733,25 @@ At 100 GB/day, you could save ~17% with the commitment tier.
         );
     };
     
-    // Tables safe for Basic Logs: not frequently queried AND not used in alerts
+    // Check if table is used in dashboards
+    const tablesInDashboards = (dataSummary.tablesInDashboards || []).map(t => t.toLowerCase());
+    const dashboardDetails = dataSummary.dashboardDetails || [];
+    
+    const isTableInDashboards = (tableName) => {
+        return tablesInDashboards.some(dashTable => 
+            dashTable.toLowerCase() === tableName.toLowerCase() ||
+            dashTable.toLowerCase().includes(tableName.toLowerCase()) ||
+            tableName.toLowerCase().includes(dashTable.toLowerCase())
+        );
+    };
+    
+    // Tables safe for Basic Logs: not frequently queried AND not used in alerts AND not used in dashboards
     const safeForBasicLogs = debugTableData.filter(t => {
         const queryInfo = frequentlyQueriedTables.find(q => q.tableName.toLowerCase() === t.name.toLowerCase());
         const frequentlyQueried = queryInfo && queryInfo.avgQueriesPerDay >= 5;
         const usedInAlerts = isTableInAlerts(t.name);
-        return !frequentlyQueried && !usedInAlerts;
+        const usedInDashboards = isTableInDashboards(t.name);
+        return !frequentlyQueried && !usedInAlerts && !usedInDashboards;
     });
     
     // Tables NOT safe due to frequent queries
@@ -1595,6 +1762,9 @@ At 100 GB/day, you could save ~17% with the commitment tier.
     
     // Tables NOT safe due to alert usage
     const tablesUsedInAlerts = debugTableData.filter(t => isTableInAlerts(t.name));
+    
+    // Tables NOT safe due to dashboard usage
+    const tablesUsedInDashboards = debugTableData.filter(t => isTableInDashboards(t.name) && !isTableInAlerts(t.name));
     
     // Show warning about tables used in alerts FIRST (highest priority)
     if (tablesUsedInAlerts.length > 0) {
@@ -1623,11 +1793,38 @@ ${tablesUsedInAlerts.map(t => {
 `;
     }
     
+    // Show warning about tables used in dashboards
+    if (tablesUsedInDashboards.length > 0) {
+        recommendations += `[CARD:warning]
+[TITLE]📊 Tables Used in Dashboards - DO NOT Use Basic Logs[/TITLE]
+[IMPACT]Would break ${dashboardDetails.length} dashboard(s)[/IMPACT]
+
+These tables are used in **Azure Dashboards** and **cannot** use Basic Logs:
+
+${tablesUsedInDashboards.map(t => {
+    const dashboards = dashboardDetails.filter(d => 
+        d.tables.some(dt => dt.toLowerCase() === t.name.toLowerCase())
+    );
+    const dashNames = dashboards.map(d => d.displayName || d.name).slice(0, 3);
+    return `- **${t.name}**: ${t.gb.toFixed(2)} GB - Used in: ${dashNames.join(', ')}${dashboards.length > 3 ? ` (+${dashboards.length - 3} more)` : ''}`;
+}).join('\n')}
+
+**Why this matters:**
+- Basic Logs cannot be used in dashboard tiles
+- Converting these tables would **break your dashboards**
+- Dashboard queries would fail to return data
+
+[ACTION]Keep these tables on Analytics tier to maintain dashboard functionality[/ACTION]
+[/CARD]
+
+`;
+    }
+    
     // Show warning if LAQueryLogs is not enabled
     if (!laQueryLogsEnabled && debugTableData.length > 0) {
-        const tablesNotInAlerts = debugTableData.filter(t => !isTableInAlerts(t.name));
-        if (tablesNotInAlerts.length > 0) {
-            const totalDebugGB = tablesNotInAlerts.reduce((sum, t) => sum + t.gb, 0);
+        const tablesNotBlocked = debugTableData.filter(t => !isTableInAlerts(t.name) && !isTableInDashboards(t.name));
+        if (tablesNotBlocked.length > 0) {
+            const totalDebugGB = tablesNotBlocked.reduce((sum, t) => sum + t.gb, 0);
             const potentialSavings = totalDebugGB * 2.76 * 0.5;
             
             recommendations += `[CARD:warning]
@@ -1637,7 +1834,7 @@ ${tablesUsedInAlerts.map(t => {
 **LAQueryLogs is not enabled** - Cannot determine which tables are actively queried.
 
 Basic Logs candidates found (but need query frequency check):
-${tablesNotInAlerts.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
+${tablesNotBlocked.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
 
 **Why this matters:**
 - Basic Logs tables cost ~50% less but have query limitations
@@ -1676,6 +1873,7 @@ ${safeForBasicLogs.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')
 
 ✅ These tables are **safe to convert**:
 - Not used in any detected alert rules
+- Not used in any detected Azure Dashboards
 - Infrequently queried (based on LAQueryLogs)
 
 [ACTION]Configure Basic Logs for debug/verbose tables in Log Analytics workspace settings[/ACTION]
@@ -1685,14 +1883,15 @@ ${safeForBasicLogs.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')
 `;
     }
     
-    // Warn about tables that look like Basic Logs candidates but are frequently queried
-    if (notSafeForBasicLogs.length > 0) {
+    // Warn about tables that look like Basic Logs candidates but are frequently queried (and not already blocked by alerts/dashboards)
+    const notSafeOnlyDueToQueries = notSafeForBasicLogs.filter(t => !isTableInAlerts(t.name) && !isTableInDashboards(t.name));
+    if (notSafeOnlyDueToQueries.length > 0) {
         recommendations += `[CARD:warning]
 [TITLE]⚠️ Frequently Queried Tables - Not Recommended for Basic Logs[/TITLE]
 
 These tables are eligible for Basic Logs but are **frequently queried**:
 
-${notSafeForBasicLogs.map(t => {
+${notSafeOnlyDueToQueries.map(t => {
     const queryInfo = frequentlyQueriedTables.find(q => q.tableName.toLowerCase() === t.name.toLowerCase());
     const avgQueries = queryInfo ? queryInfo.avgQueriesPerDay.toFixed(1) : 'N/A';
     return `- **${t.name}**: ${t.gb.toFixed(2)} GB (~${avgQueries} queries/day)`;
