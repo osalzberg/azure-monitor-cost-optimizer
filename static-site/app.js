@@ -1907,6 +1907,7 @@ After enabling, re-run this analysis in 7+ days for accurate recommendations.
 [/CARD]
 
 `;
+        }
     } else if (safeForBasicLogs.length > 0) {
         const debugGB = safeForBasicLogs.reduce((sum, t) => sum + t.gb, 0);
         const savings = debugGB * 2.76 * 0.5; // Basic logs are ~50% cheaper
