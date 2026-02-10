@@ -424,9 +424,15 @@ ${dataSummary.topTables.map(t => `- ${t.name}: ${t.gb.toFixed(2)} GB (${((t.gb/d
 ## Detailed Analysis Data Per Workspace
 ${analysisData}
 
+${dataSummary.advisorRecommendations?.length > 0 ? `## Azure Advisor Recommendations (Official)
+The following recommendations come directly from Azure Advisor:
+${dataSummary.advisorRecommendations.map((r, i) => `${i+1}. **${r.solution || r.problem}** (Impact: ${r.impact}) - Resource: ${r.impactedResource}`).join('\n')}
+
+Please incorporate these Azure Advisor recommendations into your analysis and highlight them.` : ''}
+
 ${userContext ? `## User Context\n${userContext}` : ''}
 
-IMPORTANT: When providing recommendations, ALWAYS specify which workspace the recommendation applies to. Follow the checklist exactly. Be specific with numbers. Be consistent.`;
+IMPORTANT: When providing recommendations, ALWAYS specify which workspace the recommendation applies to. If there are Azure Advisor recommendations, include them prominently with [CARD:savings] or [CARD:warning] as appropriate. Follow the checklist exactly. Be specific with numbers. Be consistent.`;
 
     try {
         console.log('Calling Azure OpenAI API...');
@@ -458,12 +464,23 @@ IMPORTANT: When providing recommendations, ALWAYS specify which workspace the re
         
         const data = await response.json();
         console.log('AI response received successfully');
-        return data.choices[0].message.content;
+        
+        // Append Advisor recommendations card if AI didn't include them
+        let aiResponse = data.choices[0].message.content;
+        if (dataSummary.advisorRecommendations?.length > 0 && !aiResponse.includes('Azure Advisor')) {
+            aiResponse += formatAdvisorRecommendations(dataSummary.advisorRecommendations);
+        }
+        
+        return aiResponse;
         
     } catch (error) {
         console.error('AI API error:', error);
         // Fallback to rule-based if AI fails
-        return generateRecommendations(allQueryData, dataSummary) + 
+        let fallback = generateRecommendations(allQueryData, dataSummary);
+        if (dataSummary.advisorRecommendations?.length > 0) {
+            fallback += formatAdvisorRecommendations(dataSummary.advisorRecommendations);
+        }
+        return fallback + 
             `\n\n[CARD:warning][TITLE]⚠️ AI Analysis Unavailable[/TITLE]AI-powered analysis failed: ${error.message}. Showing rule-based recommendations instead.[/CARD]`;
     }
 }
@@ -919,8 +936,20 @@ async function runAnalysis() {
         
         updateProgress('progressQueries', 'complete', `Analyzed ${Object.keys(allQueryData).length} workspace(s)`);
         
+        // Step 2: Fetch Azure Advisor recommendations
+        updateProgress('progressAdvisor', 'running', 'Fetching Azure Advisor recommendations...');
+        let advisorRecommendations = [];
+        try {
+            advisorRecommendations = await fetchAdvisorRecommendations(selectedWorkspaces);
+            updateProgress('progressAdvisor', 'complete', `Found ${advisorRecommendations.length} Advisor recommendation(s)`);
+        } catch (e) {
+            console.warn('Could not fetch Advisor recommendations:', e);
+            updateProgress('progressAdvisor', 'complete', 'Advisor recommendations unavailable');
+        }
+        
         // Check if we got any actual data
         const dataSummary = summarizeQueryData(allQueryData);
+        dataSummary.advisorRecommendations = advisorRecommendations;
         
         console.log('Data summary:', dataSummary);
         
@@ -973,6 +1002,148 @@ async function runAnalysis() {
         inputSection.hidden = false;
         showError(`Analysis failed: ${error.message}`);
     }
+}
+
+// ============ AZURE ADVISOR INTEGRATION ============
+async function fetchAdvisorRecommendations(workspaces) {
+    const recommendations = [];
+    const seenIds = new Set();
+    
+    // Get unique subscription IDs from workspaces
+    const subscriptionIds = [...new Set(workspaces.map(ws => {
+        const match = ws.resourceId.match(/\/subscriptions\/([^\/]+)/);
+        return match ? match[1] : null;
+    }).filter(Boolean))];
+    
+    for (const subscriptionId of subscriptionIds) {
+        try {
+            // Fetch all Advisor recommendations for the subscription
+            const response = await fetch(
+                `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01&$filter=Category eq 'Cost'`,
+                {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                }
+            );
+            
+            if (!response.ok) {
+                console.warn(`Advisor API returned ${response.status} for subscription ${subscriptionId}`);
+                continue;
+            }
+            
+            const data = await response.json();
+            
+            // Filter for Log Analytics workspace related recommendations
+            for (const rec of (data.value || [])) {
+                // Skip if we've already seen this recommendation
+                if (seenIds.has(rec.id)) continue;
+                seenIds.add(rec.id);
+                
+                const props = rec.properties || {};
+                const resourceId = props.resourceMetadata?.resourceId || '';
+                
+                // Check if it's related to Log Analytics or Monitor
+                const isLogAnalytics = resourceId.toLowerCase().includes('microsoft.operationalinsights') ||
+                                       resourceId.toLowerCase().includes('microsoft.monitor') ||
+                                       props.impactedField?.toLowerCase().includes('log') ||
+                                       props.shortDescription?.solution?.toLowerCase().includes('log analytics');
+                
+                // Also include general cost recommendations that might be relevant
+                const isCostRelevant = props.category === 'Cost' && (
+                    isLogAnalytics ||
+                    props.shortDescription?.solution?.toLowerCase().includes('commitment') ||
+                    props.shortDescription?.solution?.toLowerCase().includes('retention') ||
+                    props.shortDescription?.solution?.toLowerCase().includes('archive')
+                );
+                
+                if (isLogAnalytics || isCostRelevant) {
+                    recommendations.push({
+                        id: rec.id,
+                        name: rec.name,
+                        type: props.category || 'Cost',
+                        impact: props.impact || 'Medium',
+                        impactedResource: props.impactedValue || extractResourceName(resourceId),
+                        resourceId: resourceId,
+                        problem: props.shortDescription?.problem || '',
+                        solution: props.shortDescription?.solution || '',
+                        extendedProperties: props.extendedProperties || {},
+                        lastUpdated: props.lastUpdated,
+                        resourceGroup: extractResourceGroup(resourceId)
+                    });
+                }
+            }
+        } catch (error) {
+            console.error(`Error fetching Advisor for subscription ${subscriptionId}:`, error);
+        }
+    }
+    
+    // Also fetch recommendations specifically for each workspace
+    for (const ws of workspaces) {
+        try {
+            const response = await fetch(
+                `https://management.azure.com${ws.resourceId}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01`,
+                {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                }
+            );
+            
+            if (!response.ok) continue;
+            
+            const data = await response.json();
+            for (const rec of (data.value || [])) {
+                if (seenIds.has(rec.id)) continue;
+                seenIds.add(rec.id);
+                
+                const props = rec.properties || {};
+                recommendations.push({
+                    id: rec.id,
+                    name: rec.name,
+                    type: props.category || 'Cost',
+                    impact: props.impact || 'Medium',
+                    impactedResource: ws.name,
+                    resourceId: ws.resourceId,
+                    problem: props.shortDescription?.problem || '',
+                    solution: props.shortDescription?.solution || '',
+                    extendedProperties: props.extendedProperties || {},
+                    lastUpdated: props.lastUpdated,
+                    resourceGroup: ws.resourceGroup
+                });
+            }
+        } catch (error) {
+            console.warn(`Could not fetch Advisor for workspace ${ws.name}:`, error);
+        }
+    }
+    
+    return recommendations;
+}
+
+function extractResourceName(resourceId) {
+    if (!resourceId) return 'Unknown';
+    const parts = resourceId.split('/');
+    return parts[parts.length - 1] || 'Unknown';
+}
+
+function formatAdvisorRecommendations(advisorRecs) {
+    if (!advisorRecs || advisorRecs.length === 0) return '';
+    
+    let output = '\n\n[CARD:info]\n[TITLE]🔮 Azure Advisor Recommendations[/TITLE]\n[IMPACT]Official Azure recommendations[/IMPACT]\n\n';
+    output += 'The following recommendations come directly from Azure Advisor:\n\n';
+    
+    advisorRecs.forEach((rec, i) => {
+        const impactIcon = rec.impact === 'High' ? '🔴' : rec.impact === 'Medium' ? '🟡' : '🟢';
+        output += `**${i + 1}. ${rec.solution || rec.problem}**\n`;
+        output += `   - Resource: ${rec.impactedResource}\n`;
+        output += `   - Impact: ${impactIcon} ${rec.impact}\n`;
+        if (rec.problem && rec.problem !== rec.solution) {
+            output += `   - Issue: ${rec.problem}\n`;
+        }
+        output += '\n';
+    });
+    
+    output += '[ACTION]Review these recommendations in the Azure Portal under Advisor → Cost recommendations[/ACTION]\n';
+    output += '[DOCS]https://learn.microsoft.com/azure/advisor/advisor-cost-recommendations[/DOCS]\n';
+    output += '[/CARD]\n';
+    
+    return output;
 }
 
 // Query a workspace using Azure Resource Manager API (works with management token)
