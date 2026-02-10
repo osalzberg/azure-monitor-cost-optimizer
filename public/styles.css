@@ -31,15 +31,13 @@ body {
     max-width: 1200px;
     margin: 0 auto;
     padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 30px;
 }
 
 /* Header Styles */
 header {
     padding: 20px;
     color: var(--white);
+    margin-bottom: 30px;
 }
 
 .header-top {
@@ -1207,6 +1205,7 @@ footer {
     text-align: center;
     padding: 30px 20px;
     color: var(--white);
+    margin-top: 30px;
 }
 
 footer a {
