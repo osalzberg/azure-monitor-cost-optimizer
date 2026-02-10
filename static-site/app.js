@@ -140,6 +140,20 @@ const analysisQueries = {
         | where IsBillable == true
         | summarize TotalGB = sum(Quantity) / 1000 by DataType
         | top 10 by TotalGB desc
+    `,
+    // Check query frequency per table from LAQueryLogs to identify frequently queried tables
+    // Tables queried frequently should NOT be converted to Basic Logs
+    tableQueryFrequency: `
+        LAQueryLogs
+        | where TimeGenerated > ago(30d)
+        | extend TablesQueried = todynamic(RequestTarget)
+        | mv-expand TablesQueried
+        | extend TableName = tostring(TablesQueried)
+        | where isnotempty(TableName)
+        | summarize QueryCount = count(), DistinctUsers = dcount(AADEmail), AvgQueriesPerDay = count() / 30.0 by TableName
+        | where QueryCount > 10
+        | order by QueryCount desc
+        | take 50
     `
 };
 
@@ -321,8 +335,19 @@ ALWAYS analyze and report on ALL of these areas in order:
 - If < 50 GB/day: Pay-as-you-go is optimal
 - Calculate exact savings: (daily_gb * 30 * $2.76) vs commitment tier price
 
-## 2. BASIC LOGS CANDIDATES (REQUIRED) - Specify which workspace
-Many Azure tables support Basic Logs (50% cost savings). Common high-volume candidates include:
+## 2. BASIC LOGS CANDIDATES (REQUIRED) - CHECK QUERY FREQUENCY FIRST!
+⚠️ CRITICAL: Basic Logs have major limitations:
+- Cannot be used in dashboards, workbooks, or alert rules
+- Limited KQL operators supported
+- Query cost of ~$0.006/GB scanned
+- Only 8-day interactive retention
+
+**BEFORE recommending Basic Logs, CHECK the "Table Query Frequency" data:**
+- If a table is queried MORE than 5 times/day on average → DO NOT recommend Basic Logs
+- If a table has multiple distinct users querying it → likely used in dashboards, DO NOT recommend
+- Only recommend Basic Logs for tables that are RARELY queried (debugging/auditing purposes)
+
+Common high-volume candidates (if NOT frequently queried):
 - Container/Kubernetes: ContainerLogV2, ContainerLog, AKSAudit, AKSAuditAdmin, AKSControlPlane
 - Application: AppTraces, Syslog, AzureDiagnostics
 - Storage: StorageBlobLogs, StorageFileLogs, StorageQueueLogs, StorageTableLogs  
@@ -331,7 +356,8 @@ Many Azure tables support Basic Logs (50% cost savings). Common high-volume cand
 - Database: CDBDataPlaneRequests, SynapseSqlPool*, MySQL/PostgreSQL logs
 - Sign-in: SigninLogs, AADNonInteractiveUserSignInLogs
 - Full list: https://aka.ms/basiclogs-tables
-If any Basic Logs candidates appear in the data, recommend converting them.
+
+If a Basic Logs candidate is frequently queried, WARN the user instead of recommending conversion.
 
 ## 3. DATA COLLECTION OPTIMIZATION (REQUIRED) - Specify which workspace
 - Heartbeat frequency: If Heartbeat table exists, check if computers send >60 heartbeats/hour (default is 1/min = 60/hour). Recommend reducing to 5-min intervals if appropriate.
@@ -564,6 +590,30 @@ function formatQueryDataForAI(allQueryData, dataSummary) {
             });
             formatted += '\n';
         }
+        
+        // Table query frequency (for Basic Logs assessment)
+        if (queryResults.tableQueryFrequency?.rows?.length > 0) {
+            formatted += `**Table Query Frequency (last 30 days):**\n`;
+            formatted += `⚠️ Tables queried frequently should NOT be converted to Basic Logs\n`;
+            const tableNameIdx = queryResults.tableQueryFrequency.columns?.indexOf('TableName') ?? 0;
+            const queryCountIdx = queryResults.tableQueryFrequency.columns?.indexOf('QueryCount') ?? 1;
+            const avgPerDayIdx = queryResults.tableQueryFrequency.columns?.indexOf('AvgQueriesPerDay') ?? 3;
+            queryResults.tableQueryFrequency.rows.slice(0, 15).forEach(row => {
+                const avgPerDay = parseFloat(row[avgPerDayIdx]).toFixed(1);
+                formatted += `- ${row[tableNameIdx]}: ${row[queryCountIdx]} queries (~${avgPerDay}/day)\n`;
+            });
+            formatted += '\n';
+        }
+    }
+    
+    // Summary of frequently queried tables
+    if (dataSummary.frequentlyQueriedTables?.length > 0) {
+        formatted += '\n### Frequently Queried Tables Summary\n';
+        formatted += '⚠️ These tables are actively queried and may not be suitable for Basic Logs:\n\n';
+        dataSummary.frequentlyQueriedTables.slice(0, 10).forEach(t => {
+            formatted += `- **${t.tableName}**: ${t.queryCount} queries (avg ${t.avgQueriesPerDay.toFixed(1)}/day)\n`;
+        });
+        formatted += '\n';
     }
     
     return formatted;
@@ -1171,10 +1221,12 @@ function summarizeQueryData(allQueryData) {
         workspacesEmpty: 0,
         totalIngestionGB: 0,
         byResourceGroup: {},
-        topTables: []
+        topTables: [],
+        frequentlyQueriedTables: [] // New: track frequently queried tables
     };
     
     const tableData = {};
+    const tableQueryData = {}; // Aggregate query frequency across workspaces
     
     for (const [wsName, queryResults] of Object.entries(allQueryData)) {
         const ws = currentWorkspaces.find(w => w.name === wsName);
@@ -1201,6 +1253,29 @@ function summarizeQueryData(allQueryData) {
             });
         }
         
+        // Extract table query frequency data from LAQueryLogs
+        const queryFreqData = queryResults.tableQueryFrequency;
+        if (queryFreqData && queryFreqData.rows && queryFreqData.rows.length > 0) {
+            const tableNameIdx = queryFreqData.columns?.indexOf('TableName') ?? 0;
+            const queryCountIdx = queryFreqData.columns?.indexOf('QueryCount') ?? 1;
+            const usersIdx = queryFreqData.columns?.indexOf('DistinctUsers') ?? 2;
+            const avgPerDayIdx = queryFreqData.columns?.indexOf('AvgQueriesPerDay') ?? 3;
+            
+            queryFreqData.rows.forEach(row => {
+                const tableName = row[tableNameIdx];
+                const queryCount = parseFloat(row[queryCountIdx]) || 0;
+                const distinctUsers = parseFloat(row[usersIdx]) || 0;
+                const avgQueriesPerDay = parseFloat(row[avgPerDayIdx]) || 0;
+                
+                if (!tableQueryData[tableName]) {
+                    tableQueryData[tableName] = { queryCount: 0, distinctUsers: 0, avgQueriesPerDay: 0 };
+                }
+                tableQueryData[tableName].queryCount += queryCount;
+                tableQueryData[tableName].distinctUsers = Math.max(tableQueryData[tableName].distinctUsers, distinctUsers);
+                tableQueryData[tableName].avgQueriesPerDay += avgQueriesPerDay;
+            });
+        }
+        
         summary.byResourceGroup[rg].workspaces.push({ name: wsName, gb: wsGB });
         summary.byResourceGroup[rg].totalGB += wsGB;
         
@@ -1219,6 +1294,16 @@ function summarizeQueryData(allQueryData) {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10)
         .map(([name, gb]) => ({ name, gb }));
+    
+    // Frequently queried tables
+    summary.frequentlyQueriedTables = Object.entries(tableQueryData)
+        .map(([tableName, data]) => ({
+            tableName,
+            queryCount: data.queryCount,
+            distinctUsers: data.distinctUsers,
+            avgQueriesPerDay: data.avgQueriesPerDay
+        }))
+        .sort((a, b) => b.queryCount - a.queryCount);
     
     return summary;
 }
@@ -1295,12 +1380,24 @@ At 100 GB/day, you could save ~17% with the commitment tier.
 `;
     }
     
-    // Basic Logs Recommendation
+    // Basic Logs Recommendation - only recommend for tables NOT frequently queried
     const debugTables = ['ContainerLogV2', 'AppTraces', 'AzureDiagnostics', 'Syslog'];
     const debugTableData = dataSummary.topTables.filter(t => debugTables.includes(t.name));
     
-    if (debugTableData.length > 0) {
-        const debugGB = debugTableData.reduce((sum, t) => sum + t.gb, 0);
+    // Filter out tables that are frequently queried (not suitable for Basic Logs)
+    const frequentlyQueriedTables = dataSummary.frequentlyQueriedTables || [];
+    const safeForBasicLogs = debugTableData.filter(t => {
+        const queryInfo = frequentlyQueriedTables.find(q => q.tableName.toLowerCase() === t.name.toLowerCase());
+        // If table is queried more than 5 times per day on average, it's too frequently used
+        return !queryInfo || queryInfo.avgQueriesPerDay < 5;
+    });
+    const notSafeForBasicLogs = debugTableData.filter(t => {
+        const queryInfo = frequentlyQueriedTables.find(q => q.tableName.toLowerCase() === t.name.toLowerCase());
+        return queryInfo && queryInfo.avgQueriesPerDay >= 5;
+    });
+    
+    if (safeForBasicLogs.length > 0) {
+        const debugGB = safeForBasicLogs.reduce((sum, t) => sum + t.gb, 0);
         const savings = debugGB * 2.76 * 0.5; // Basic logs are ~50% cheaper
         
         recommendations += `[CARD:savings]
@@ -1309,12 +1406,42 @@ At 100 GB/day, you could save ~17% with the commitment tier.
 
 These tables are candidates for Basic Logs (lower cost, limited query):
 
-${debugTableData.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
+${safeForBasicLogs.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
 
-Basic Logs cost ~50% less but have limited query capabilities (8 days retention, simplified queries).
+**Important:** Basic Logs have limitations:
+- Cannot be used in dashboards, workbooks, or alert rules
+- Limited KQL query operators
+- Query cost of ~$0.006/GB scanned
+- 8-day interactive retention only
+
+✅ These tables appear to be **infrequently queried** based on LAQueryLogs analysis.
 
 [ACTION]Configure Basic Logs for debug/verbose tables in Log Analytics workspace settings[/ACTION]
 [DOCS]https://learn.microsoft.com/azure/azure-monitor/logs/basic-logs-configure[/DOCS]
+[/CARD]
+
+`;
+    }
+    
+    // Warn about tables that look like Basic Logs candidates but are frequently queried
+    if (notSafeForBasicLogs.length > 0) {
+        recommendations += `[CARD:warning]
+[TITLE]⚠️ Frequently Queried Tables - Not Recommended for Basic Logs[/TITLE]
+
+These tables are eligible for Basic Logs but are **frequently queried**:
+
+${notSafeForBasicLogs.map(t => {
+    const queryInfo = frequentlyQueriedTables.find(q => q.tableName.toLowerCase() === t.name.toLowerCase());
+    const avgQueries = queryInfo ? queryInfo.avgQueriesPerDay.toFixed(1) : 'N/A';
+    return `- **${t.name}**: ${t.gb.toFixed(2)} GB (~${avgQueries} queries/day)`;
+}).join('\n')}
+
+Basic Logs are **not recommended** because:
+- These tables are actively used (dashboards, alerts, or ad-hoc queries)
+- Query costs would likely exceed ingestion savings
+- Dashboards and alerts cannot use Basic Logs tables
+
+[ACTION]Review who is querying these tables and why before considering Basic Logs[/ACTION]
 [/CARD]
 
 `;
