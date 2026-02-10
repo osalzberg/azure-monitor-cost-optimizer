@@ -2280,6 +2280,12 @@ function formatMarkdown(text) {
     // Clean up any remaining empty lines
     text = text.replace(/\n\s*\n\s*\n/g, '\n\n');
     
+    // Clean up any unmatched card tags
+    text = text.replace(/\[CARD:[^\]]*\]/g, '');
+    text = text.replace(/\[\/CARD\]/g, '');
+    text = text.replace(/\[TITLE\][^\[]*\[\/TITLE\]/g, '');
+    text = text.replace(/\[IMPACT\][^\[]*\[\/IMPACT\]/g, '');
+    
     return text;
 }
 
