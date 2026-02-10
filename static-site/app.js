@@ -435,18 +435,42 @@ Common high-volume candidates (if NOT in alerts and NOT frequently queried):
 
 If a Basic Logs candidate is frequently queried, WARN the user instead of recommending conversion.
 
-## 3. DATA COLLECTION OPTIMIZATION (REQUIRED) - Specify which workspace
+## 3. AUXILIARY LOGS CANDIDATES (REQUIRED) - FOR CUSTOM TABLES ONLY
+⚠️ Auxiliary Logs are even CHEAPER than Basic Logs but with MORE limitations:
+- **ONLY for custom tables** (tables ending in _CL created via Data Collection Rules)
+- Azure built-in tables do NOT support Auxiliary plan
+- No alerts at all (not even Simple Log Alerts)
+- No Insights support
+- Slower queries - NOT optimized for real-time analysis
+- No restore capability
+- No data export
+- Good for: Auditing, compliance, verbose troubleshooting logs you rarely query
+
+**When to recommend Auxiliary Logs:**
+- Custom tables (_CL suffix) with high volume (>1 GB/month)
+- Tables used purely for auditing/compliance/troubleshooting
+- Tables NOT in alerts, NOT in dashboards, and RARELY queried (<1/day)
+- Data you need to keep for long periods but rarely access
+
+**Cost comparison:**
+- Analytics: Standard ingestion cost + query cost included
+- Basic: ~50% cheaper ingestion + $0.006/GB query cost
+- Auxiliary: ~85% cheaper ingestion + $0.006/GB query cost (cheapest option)
+
+Docs: https://learn.microsoft.com/azure/azure-monitor/logs/logs-table-plans
+
+## 4. DATA COLLECTION OPTIMIZATION (REQUIRED) - Specify which workspace
 - Heartbeat frequency: If Heartbeat table exists, check if computers send >60 heartbeats/hour (default is 1/min = 60/hour). Recommend reducing to 5-min intervals if appropriate.
 - Performance counters: Check Perf table - recommend reducing collection frequency from 10s to 60s for non-critical counters
 - Container Insights: If ContainerLog* tables exist, recommend filtering stdout/stderr, excluding namespaces
 - Duplicate collection: Flag if same data appears from multiple sources
 
-## 4. RETENTION OPTIMIZATION (REQUIRED)
+## 5. RETENTION OPTIMIZATION (REQUIRED)
 - Recommend 30-day interactive retention for high-volume tables
 - Recommend archive tier for data needed >90 days
 - Security tables may need longer retention (compliance)
 
-## 5. TABLE-SPECIFIC RECOMMENDATIONS (REQUIRED) - Specify which workspace
+## 6. TABLE-SPECIFIC RECOMMENDATIONS (REQUIRED) - Specify which workspace
 For EACH top table by volume, provide specific recommendations including which workspace it's in.
 
 FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
@@ -1957,13 +1981,70 @@ After enabling, re-run this analysis in 7+ days for accurate recommendations.
         const debugGB = safeForBasicLogs.reduce((sum, t) => sum + t.gb, 0);
         const savings = debugGB * 2.76 * 0.5; // Basic logs are ~50% cheaper
         
-        recommendations += `[CARD:savings]
+        // Split into custom tables (eligible for Auxiliary) and Azure tables (Basic only)
+        const customTables = safeForBasicLogs.filter(t => t.name.endsWith('_CL'));
+        const azureTables = safeForBasicLogs.filter(t => !t.name.endsWith('_CL'));
+        
+        // Check for very rarely queried custom tables (candidates for Auxiliary)
+        const auxiliaryCandidates = customTables.filter(t => {
+            const queryInfo = frequentlyQueriedTables.find(q => q.tableName.toLowerCase() === t.name.toLowerCase());
+            // Auxiliary is for tables queried less than 1 time per day on average
+            return !queryInfo || queryInfo.avgQueriesPerDay < 1;
+        });
+        
+        const basicOnlyCustomTables = customTables.filter(t => !auxiliaryCandidates.includes(t));
+        
+        // Recommend Auxiliary Logs for eligible custom tables
+        if (auxiliaryCandidates.length > 0) {
+            const auxGB = auxiliaryCandidates.reduce((sum, t) => sum + t.gb, 0);
+            const auxSavings = auxGB * 2.76 * 0.85; // Auxiliary is ~85% cheaper
+            
+            recommendations += `[CARD:savings]
+[TITLE]💰 Auxiliary Logs Opportunity - Maximum Savings[/TITLE]
+[IMPACT]Save ~$${auxSavings.toFixed(2)}/month (85% reduction)[/IMPACT]
+
+These **custom tables** are candidates for **Auxiliary Logs** (cheapest option):
+
+${auxiliaryCandidates.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
+
+**Why Auxiliary Logs?**
+- Custom tables (_CL) support Auxiliary plan
+- Rarely queried (< 1 query/day avg)
+- Not used in alerts or dashboards
+- Perfect for: auditing, compliance, verbose troubleshooting
+
+**Auxiliary Logs limitations:**
+- No alerts (not even Simple Log Alerts)
+- Slower queries - not for real-time analysis
+- No restore capability
+- No data export
+- Query cost of ~$0.006/GB when you do query
+
+**Cost comparison for ${auxGB.toFixed(2)} GB:**
+- Analytics: ~$${(auxGB * 2.76).toFixed(2)}/month
+- Basic: ~$${(auxGB * 2.76 * 0.5).toFixed(2)}/month (50% savings)
+- Auxiliary: ~$${(auxGB * 2.76 * 0.15).toFixed(2)}/month (85% savings) ✅
+
+[ACTION]Configure Auxiliary Logs plan for these custom tables in Log Analytics workspace[/ACTION]
+[DOCS]https://learn.microsoft.com/azure/azure-monitor/logs/logs-table-plans[/DOCS]
+[/CARD]
+
+`;
+        }
+        
+        // Recommend Basic Logs for remaining tables (Azure tables + more frequently queried custom tables)
+        const basicCandidates = [...azureTables, ...basicOnlyCustomTables];
+        if (basicCandidates.length > 0) {
+            const basicGB = basicCandidates.reduce((sum, t) => sum + t.gb, 0);
+            const basicSavings = basicGB * 2.76 * 0.5;
+            
+            recommendations += `[CARD:savings]
 [TITLE]💡 Basic Logs Opportunity[/TITLE]
-[IMPACT]Save ~$${savings.toFixed(2)}/month[/IMPACT]
+[IMPACT]Save ~$${basicSavings.toFixed(2)}/month[/IMPACT]
 
 These tables are candidates for Basic Logs (lower cost, limited query):
 
-${safeForBasicLogs.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
+${basicCandidates.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
 
 **Important:** Basic Logs have limitations:
 - Cannot be used in dashboards, workbooks, or alert rules
@@ -1981,6 +2062,7 @@ ${safeForBasicLogs.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')
 [/CARD]
 
 `;
+        }
     }
     
     // Warn about tables that look like Basic Logs candidates but are frequently queried (and not already blocked by alerts/dashboards)
