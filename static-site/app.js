@@ -201,12 +201,28 @@ function copyCommand() {
 // Sign in with pasted token
 function signInWithToken() {
     const tokenInput = document.getElementById('tokenInput');
-    let token = tokenInput.value.trim();
+    if (!tokenInput) {
+        console.error('Token input element not found');
+        showError('Error: Could not find token input');
+        return;
+    }
     
-    // Remove any quotes that might have been copied
+    let token = tokenInput.value;
+    
+    // Debug log
+    console.log('Sign in attempt, token length:', token ? token.length : 0);
+    
+    if (!token) {
+        showError('Please paste your access token');
+        return;
+    }
+    
+    // Clean up the token - remove whitespace, quotes, newlines
+    token = token.trim();
     token = token.replace(/^["']|["']$/g, '');
-    // Remove any newlines
-    token = token.replace(/[\r\n]/g, '');
+    token = token.replace(/[\r\n\s]/g, '');
+    
+    console.log('Cleaned token length:', token.length);
     
     if (!token) {
         showError('Please paste your access token');
@@ -215,10 +231,19 @@ function signInWithToken() {
     
     // Try to validate as JWT
     const parts = token.split('.');
+    console.log('Token parts:', parts.length);
     
     if (parts.length === 3) {
         try {
-            const payload = JSON.parse(atob(parts[1]));
+            // Handle base64url encoding (replace - with + and _ with /)
+            let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            // Pad with = if needed
+            while (base64.length % 4) {
+                base64 += '=';
+            }
+            const payload = JSON.parse(atob(base64));
+            console.log('Token payload decoded, exp:', payload.exp);
+            
             const exp = payload.exp * 1000;
             
             if (exp < Date.now()) {
@@ -226,7 +251,8 @@ function signInWithToken() {
                 return;
             }
             
-            const username = payload.upn || payload.unique_name || payload.preferred_username || 'User';
+            const username = payload.upn || payload.unique_name || payload.preferred_username || payload.name || 'User';
+            console.log('Username from token:', username);
             
             accessToken = token;
             localStorage.setItem('azureToken', JSON.stringify({
@@ -235,15 +261,18 @@ function signInWithToken() {
                 expiresAt: exp
             }));
             
+            console.log('Token stored, calling onSignedIn');
             onSignedIn(username);
             return;
         } catch (e) {
             console.error('Token decode error:', e);
+            // Continue to fallback
         }
     }
     
     // If we couldn't parse but it looks like a token, try anyway
     if (token.length > 100) {
+        console.log('Using token without validation (length:', token.length, ')');
         accessToken = token;
         localStorage.setItem('azureToken', JSON.stringify({
             token: token,
@@ -254,7 +283,7 @@ function signInWithToken() {
         return;
     }
     
-    showError('Invalid token. Make sure you copied the entire output from the az command.');
+    showError('Invalid token. Make sure you copied the entire output from the az command (it should be a long string of characters).');
 }
 
 // Sign Out
@@ -2298,8 +2327,37 @@ function newAnalysis() {
     inputSection.hidden = false;
 }
 
-// Show error message
+// Show error message - displays inline error instead of alert
 function showError(message) {
+    console.error('Error:', message);
+    
+    // Try to show error near the token input if on auth page
+    const tokenInput = document.getElementById('tokenInput');
+    if (tokenInput) {
+        // Remove any existing error
+        const existingError = document.querySelector('.auth-error');
+        if (existingError) existingError.remove();
+        
+        // Create error element
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'auth-error';
+        errorDiv.innerHTML = `⚠️ ${message}`;
+        errorDiv.style.cssText = 'background: #fee; color: #c00; padding: 12px 16px; border-radius: 8px; margin: 10px 0; border: 1px solid #fcc; font-weight: 500;';
+        
+        // Insert after token input
+        tokenInput.parentNode.insertBefore(errorDiv, tokenInput.nextSibling);
+        
+        // Auto-remove after 10 seconds
+        setTimeout(() => errorDiv.remove(), 10000);
+        
+        // Shake the input
+        tokenInput.style.animation = 'shake 0.5s';
+        setTimeout(() => tokenInput.style.animation = '', 500);
+        
+        return;
+    }
+    
+    // Fallback to alert
     alert(message);
 }
 // ============ DARK MODE ============
