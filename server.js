@@ -392,15 +392,21 @@ OUTPUT FORMAT - You MUST use this exact card structure:
 [CARD:savings]
 [TITLE]Move High-Volume Tables to Basic Logs[/TITLE]
 [IMPACT]$XX.XX/month savings[/IMPACT]
-Explanation of the recommendation with specific data.
+Explanation of the recommendation with specific data. Include analysis, tables, and context here.
 
 | Table | Size (GB) | Current Cost | Basic Logs Cost | Savings |
 |-------|-----------|--------------|-----------------|----------|
 | Perf | 14.82 | $40.90 | $7.41 | $33.49 |
 
-[ACTION]Go to Log Analytics workspace > Tables > Select table > Change plan to Basic Logs[/ACTION]
+[ACTION]Navigate to Log Analytics workspace Settings > Tables. Select the target table (e.g., Perf, ContainerInventory), click "Manage table" and change "Table plan" to "Basic".[/ACTION]
 [DOCS]https://learn.microsoft.com/azure/azure-monitor/logs/basic-logs-configure[/DOCS]
 [/CARD]
+
+CRITICAL FORMATTING RULES:
+1. The card body (between [IMPACT] and [ACTION]) should contain the explanation, analysis, and data
+2. The [ACTION] tag should ONLY contain the specific steps the user needs to take - DO NOT repeat information from the body
+3. DO NOT use markdown links inside [ACTION] - use plain text with clear instructions instead
+4. For documentation links, ONLY use the [DOCS] tag with a plain URL
 
 Card types: savings (green, for cost savings), warning (orange, for issues), info (blue, for general info), success (green, optimal config)
 
