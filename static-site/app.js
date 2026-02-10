@@ -189,17 +189,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// Copy the az command
-function copyCommand() {
+// Copy the az command - must be global for onclick
+window.copyCommand = function() {
     const cmd = "az account get-access-token --resource https://management.azure.com --query accessToken -o tsv | pbcopy";
-    navigator.clipboard.writeText(cmd);
-    const btn = document.querySelector('.copy-cli-btn');
-    btn.textContent = '✓ Copied!';
-    setTimeout(() => btn.textContent = '📋 Copy', 2000);
+    
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(cmd).then(() => {
+            showCopyCmdSuccess();
+        }).catch(() => {
+            fallbackCopyCmd(cmd);
+        });
+    } else {
+        fallbackCopyCmd(cmd);
+    }
+};
+
+function fallbackCopyCmd(text) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+        document.execCommand('copy');
+        showCopyCmdSuccess();
+    } catch (e) {
+        console.error('Copy failed:', e);
+    }
+    document.body.removeChild(textArea);
 }
 
-// Sign in with pasted token
-function signInWithToken() {
+function showCopyCmdSuccess() {
+    const btn = document.querySelector('.copy-cli-btn');
+    if (btn) {
+        btn.textContent = '✓ Copied!';
+        setTimeout(() => btn.textContent = '📋 Copy', 2000);
+    }
+}
+
+// Sign in with pasted token - must be global for onclick
+window.signInWithToken = function() {
     const tokenInput = document.getElementById('tokenInput');
     if (!tokenInput) {
         console.error('Token input element not found');
@@ -2587,3 +2617,23 @@ showRecommendations = function(recs, ws, data) {
         displaySavingsCounter();
     }, 100);
 };
+
+// ============ EXPOSE FUNCTIONS TO WINDOW FOR ONCLICK HANDLERS ============
+// These functions need to be globally accessible for inline onclick handlers
+window.signOut = signOut;
+window.filterSubscriptions = filterSubscriptions;
+window.loadWorkspaces = loadWorkspaces;
+window.selectAllWorkspaces = selectAllWorkspaces;
+window.deselectAllWorkspaces = deselectAllWorkspaces;
+window.expandAllGroups = expandAllGroups;
+window.collapseAllGroups = collapseAllGroups;
+window.saveAISettings = saveAISettings;
+window.copyRecommendations = copyRecommendations;
+window.copyRecommendationsAsMarkdown = copyRecommendationsAsMarkdown;
+window.resetChecklist = resetChecklist;
+window.newAnalysis = newAnalysis;
+window.runAnalysis = runAnalysis;
+window.toggleWorkspaceSelection = toggleWorkspaceSelection;
+window.toggleResourceGroup = toggleResourceGroup;
+window.toggleRGSelection = toggleRGSelection;
+window.filterWorkspaces = filterWorkspaces;
