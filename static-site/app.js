@@ -1015,11 +1015,15 @@ async function fetchAdvisorRecommendations(workspaces) {
         return match ? match[1] : null;
     }).filter(Boolean))];
     
+    // Get workspace names for matching
+    const workspaceNames = workspaces.map(ws => ws.name.toLowerCase());
+    const workspaceResourceIds = workspaces.map(ws => ws.resourceId.toLowerCase());
+    
     for (const subscriptionId of subscriptionIds) {
         try {
-            // Fetch all Advisor recommendations for the subscription
+            // Fetch ALL cost recommendations for the subscription (removed filter to get everything)
             const response = await fetch(
-                `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01&$filter=Category eq 'Cost'`,
+                `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01`,
                 {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 }
@@ -1031,35 +1035,53 @@ async function fetchAdvisorRecommendations(workspaces) {
             }
             
             const data = await response.json();
+            console.log(`Advisor: Found ${data.value?.length || 0} total recommendations for subscription`);
             
-            // Filter for Log Analytics workspace related recommendations
+            // Filter for relevant recommendations
             for (const rec of (data.value || [])) {
                 // Skip if we've already seen this recommendation
                 if (seenIds.has(rec.id)) continue;
-                seenIds.add(rec.id);
                 
                 const props = rec.properties || {};
-                const resourceId = props.resourceMetadata?.resourceId || '';
+                const resourceId = (props.resourceMetadata?.resourceId || rec.id || '').toLowerCase();
+                const impactedValue = (props.impactedValue || '').toLowerCase();
+                const solution = (props.shortDescription?.solution || '').toLowerCase();
+                const problem = (props.shortDescription?.problem || '').toLowerCase();
+                
+                // Check if it's related to any of our selected workspaces
+                const matchesWorkspace = workspaceNames.some(name => 
+                    resourceId.includes(name) || 
+                    impactedValue.includes(name) ||
+                    solution.includes(name) ||
+                    problem.includes(name)
+                ) || workspaceResourceIds.some(rid => resourceId.includes(rid.toLowerCase()));
                 
                 // Check if it's related to Log Analytics or Monitor
-                const isLogAnalytics = resourceId.toLowerCase().includes('microsoft.operationalinsights') ||
-                                       resourceId.toLowerCase().includes('microsoft.monitor') ||
-                                       props.impactedField?.toLowerCase().includes('log') ||
-                                       props.shortDescription?.solution?.toLowerCase().includes('log analytics');
+                const isLogAnalytics = resourceId.includes('microsoft.operationalinsights') ||
+                                       resourceId.includes('microsoft.monitor') ||
+                                       resourceId.includes('workspaces') ||
+                                       solution.includes('log analytics') ||
+                                       solution.includes('workspace') ||
+                                       problem.includes('log analytics') ||
+                                       problem.includes('workspace');
                 
-                // Also include general cost recommendations that might be relevant
-                const isCostRelevant = props.category === 'Cost' && (
-                    isLogAnalytics ||
-                    props.shortDescription?.solution?.toLowerCase().includes('commitment') ||
-                    props.shortDescription?.solution?.toLowerCase().includes('retention') ||
-                    props.shortDescription?.solution?.toLowerCase().includes('archive')
-                );
+                // Include Cost recommendations that are relevant
+                const isCostRecommendation = props.category === 'Cost';
                 
-                if (isLogAnalytics || isCostRelevant) {
+                // Include if it matches workspace, is Log Analytics related, or is a cost recommendation
+                if (matchesWorkspace || isLogAnalytics || (isCostRecommendation && (
+                    solution.includes('commitment') ||
+                    solution.includes('retention') ||
+                    solution.includes('archive') ||
+                    solution.includes('basic log') ||
+                    solution.includes('data collection') ||
+                    solution.includes('ingestion')
+                ))) {
+                    seenIds.add(rec.id);
                     recommendations.push({
                         id: rec.id,
                         name: rec.name,
-                        type: props.category || 'Cost',
+                        category: props.category || 'Cost',
                         impact: props.impact || 'Medium',
                         impactedResource: props.impactedValue || extractResourceName(resourceId),
                         resourceId: resourceId,
@@ -1069,6 +1091,7 @@ async function fetchAdvisorRecommendations(workspaces) {
                         lastUpdated: props.lastUpdated,
                         resourceGroup: extractResourceGroup(resourceId)
                     });
+                    console.log(`Advisor: Added recommendation - ${props.shortDescription?.solution || rec.name}`);
                 }
             }
         } catch (error) {
@@ -1079,6 +1102,7 @@ async function fetchAdvisorRecommendations(workspaces) {
     // Also fetch recommendations specifically for each workspace
     for (const ws of workspaces) {
         try {
+            console.log(`Fetching Advisor recommendations for workspace: ${ws.name}`);
             const response = await fetch(
                 `https://management.azure.com${ws.resourceId}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01`,
                 {
@@ -1086,9 +1110,14 @@ async function fetchAdvisorRecommendations(workspaces) {
                 }
             );
             
-            if (!response.ok) continue;
+            if (!response.ok) {
+                console.warn(`Advisor API returned ${response.status} for workspace ${ws.name}`);
+                continue;
+            }
             
             const data = await response.json();
+            console.log(`Advisor: Found ${data.value?.length || 0} recommendations for workspace ${ws.name}`);
+            
             for (const rec of (data.value || [])) {
                 if (seenIds.has(rec.id)) continue;
                 seenIds.add(rec.id);
@@ -1097,7 +1126,7 @@ async function fetchAdvisorRecommendations(workspaces) {
                 recommendations.push({
                     id: rec.id,
                     name: rec.name,
-                    type: props.category || 'Cost',
+                    category: props.category || 'Cost',
                     impact: props.impact || 'Medium',
                     impactedResource: ws.name,
                     resourceId: ws.resourceId,
@@ -1107,12 +1136,14 @@ async function fetchAdvisorRecommendations(workspaces) {
                     lastUpdated: props.lastUpdated,
                     resourceGroup: ws.resourceGroup
                 });
+                console.log(`Advisor: Added workspace-specific recommendation - ${props.shortDescription?.solution || rec.name}`);
             }
         } catch (error) {
             console.warn(`Could not fetch Advisor for workspace ${ws.name}:`, error);
         }
     }
     
+    console.log(`Advisor: Total recommendations found: ${recommendations.length}`);
     return recommendations;
 }
 
@@ -1133,6 +1164,7 @@ function formatAdvisorRecommendations(advisorRecs) {
         output += `**${i + 1}. ${rec.solution || rec.problem}**\n`;
         output += `   - Resource: ${rec.impactedResource}\n`;
         output += `   - Impact: ${impactIcon} ${rec.impact}\n`;
+        output += `   - Category: ${rec.category || 'Cost'}\n`;
         if (rec.problem && rec.problem !== rec.solution) {
             output += `   - Issue: ${rec.problem}\n`;
         }
