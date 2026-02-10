@@ -1568,6 +1568,13 @@ async function queryWorkspace(workspace) {
             
             if (!response.ok) {
                 const errorText = await response.text();
+                // Check if this is a Basic Logs API error (LAQueryLogs configured as Basic Logs)
+                if (errorText.includes('UnsupportedApiQueryValidationError') || 
+                    errorText.includes('Basic Logs table is not supported')) {
+                    console.info(`Query ${queryName}: LAQueryLogs is configured as Basic Logs table, skipping...`);
+                    results[queryName] = { basicLogsTable: true, rows: [], columns: [] };
+                    continue;
+                }
                 console.error(`Query ${queryName} failed:`, response.status, errorText);
                 results[queryName] = { error: `HTTP ${response.status}`, rows: [], columns: [] };
                 continue;
@@ -1636,13 +1643,19 @@ function summarizeQueryData(allQueryData) {
         
         // Check if LAQueryLogs is enabled for this workspace
         const laQueryLogsStatus = queryResults.laQueryLogsStatus;
-        if (laQueryLogsStatus && laQueryLogsStatus.rows && laQueryLogsStatus.rows.length > 0) {
+        if (laQueryLogsStatus && laQueryLogsStatus.basicLogsTable) {
+            // LAQueryLogs is configured as Basic Logs table - cannot query it
+            summary.laQueryLogsBasicLogs = true;
+        } else if (laQueryLogsStatus && laQueryLogsStatus.rows && laQueryLogsStatus.rows.length > 0) {
             summary.laQueryLogsEnabled = true;
         }
         
         // Extract table query frequency data from LAQueryLogs
         const queryFreqData = queryResults.tableQueryFrequency;
-        if (queryFreqData && queryFreqData.rows && queryFreqData.rows.length > 0) {
+        if (queryFreqData && queryFreqData.basicLogsTable) {
+            // LAQueryLogs is configured as Basic Logs table - cannot query it
+            summary.laQueryLogsBasicLogs = true;
+        } else if (queryFreqData && queryFreqData.rows && queryFreqData.rows.length > 0) {
             summary.laQueryLogsEnabled = true; // If we got frequency data, it's definitely enabled
             const tableNameIdx = queryFreqData.columns?.indexOf('TableName') ?? 0;
             const queryCountIdx = queryFreqData.columns?.indexOf('QueryCount') ?? 1;
@@ -1874,8 +1887,40 @@ ${tablesUsedInDashboards.map(t => {
 `;
     }
     
+    // Show warning if LAQueryLogs is configured as Basic Logs (can't query it)
+    if (summary.laQueryLogsBasicLogs && debugTableData.length > 0) {
+        const tablesNotBlocked = debugTableData.filter(t => !isTableInAlerts(t.name) && !isTableInDashboards(t.name));
+        if (tablesNotBlocked.length > 0) {
+            const totalDebugGB = tablesNotBlocked.reduce((sum, t) => sum + t.gb, 0);
+            const potentialSavings = totalDebugGB * 2.76 * 0.5;
+            
+            recommendations += `[CARD:warning]
+[TITLE]⚠️ LAQueryLogs is Configured as Basic Logs[/TITLE]
+[IMPACT]Potential ~$${potentialSavings.toFixed(2)}/month savings[/IMPACT]
+
+**LAQueryLogs is set to Basic Logs plan** - Cannot query it to determine table usage patterns.
+
+Basic Logs candidates found (but need query frequency check):
+${tablesNotBlocked.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
+
+**Why this matters:**
+- LAQueryLogs tracks which tables are being queried
+- When LAQueryLogs itself is Basic Logs, we can't query it via standard API
+- Cannot determine if these tables are actively queried
+
+**Recommendation:**
+Consider changing LAQueryLogs back to Analytics plan to enable query auditing,
+or accept that these tables may be safe for Basic Logs based on dashboard/alert checks only.
+
+[ACTION]Review LAQueryLogs table configuration in workspace[/ACTION]
+[DOCS]https://learn.microsoft.com/azure/azure-monitor/logs/basic-logs-configure[/DOCS]
+[/CARD]
+
+`;
+        }
+    }
     // Show warning if LAQueryLogs is not enabled
-    if (!laQueryLogsEnabled && debugTableData.length > 0) {
+    else if (!laQueryLogsEnabled && debugTableData.length > 0) {
         const tablesNotBlocked = debugTableData.filter(t => !isTableInAlerts(t.name) && !isTableInDashboards(t.name));
         if (tablesNotBlocked.length > 0) {
             const totalDebugGB = tablesNotBlocked.reduce((sum, t) => sum + t.gb, 0);
