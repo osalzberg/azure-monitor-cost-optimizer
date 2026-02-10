@@ -2230,25 +2230,66 @@ function formatCardBody(text) {
 // Copy recommendations to clipboard
 function copyRecommendations() {
     const content = document.getElementById('recommendationsContent');
+    if (!content) {
+        console.error('recommendationsContent element not found');
+        return;
+    }
     const text = content.innerText;
-    navigator.clipboard.writeText(text).then(() => {
-        const btn = document.getElementById('copyBtn');
-        btn.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-            Copied!
-        `;
-        setTimeout(() => {
-            btn.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-                Copy
-            `;
-        }, 2000);
-    });
+    
+    // Try modern clipboard API first, fall back to legacy method
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            showCopySuccess('copyBtn');
+        }).catch(err => {
+            console.error('Clipboard API failed:', err);
+            fallbackCopy(text, 'copyBtn');
+        });
+    } else {
+        fallbackCopy(text, 'copyBtn');
+    }
+}
+
+// Fallback copy method for older browsers or non-HTTPS
+function fallbackCopy(text, btnId) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            showCopySuccess(btnId);
+        } else {
+            alert('Copy failed. Please select the text manually and copy.');
+        }
+    } catch (err) {
+        console.error('Fallback copy failed:', err);
+        alert('Copy failed. Please select the text manually and copy.');
+    }
+    
+    document.body.removeChild(textArea);
+}
+
+// Show copy success feedback
+function showCopySuccess(btnId) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        Copied!
+    `;
+    setTimeout(() => {
+        btn.innerHTML = originalHTML;
+    }, 2000);
 }
 
 // New analysis
@@ -2311,14 +2352,56 @@ function copyRecommendationsAsMarkdown() {
         markdown += '---\n\n';
     });
     
-    navigator.clipboard.writeText(markdown).then(() => {
-        const btn = document.getElementById('copyMarkdownBtn');
-        if (btn) {
-            const orig = btn.innerHTML;
-            btn.innerHTML = '✓ Copied!';
-            setTimeout(() => btn.innerHTML = orig, 2000);
+    // Use the same robust copy method
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(markdown).then(() => {
+            showMarkdownCopySuccess();
+        }).catch(err => {
+            console.error('Clipboard API failed:', err);
+            fallbackCopyMarkdown(markdown);
+        });
+    } else {
+        fallbackCopyMarkdown(markdown);
+    }
+}
+
+function fallbackCopyMarkdown(text) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            showMarkdownCopySuccess();
+        } else {
+            alert('Copy failed. Please select the text manually and copy.');
         }
-    });
+    } catch (err) {
+        console.error('Fallback copy failed:', err);
+        alert('Copy failed. Please select the text manually and copy.');
+    }
+    
+    document.body.removeChild(textArea);
+}
+
+function showMarkdownCopySuccess() {
+    const btn = document.getElementById('copyMarkdownBtn');
+    if (btn) {
+        const orig = btn.innerHTML;
+        btn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Copied!
+        `;
+        setTimeout(() => btn.innerHTML = orig, 2000);
+    }
 }
 
 // ============ CHECKLIST TRACKER ============
