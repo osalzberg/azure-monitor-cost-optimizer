@@ -2629,7 +2629,4 @@ window.copyRecommendationsAsMarkdown = copyRecommendationsAsMarkdown;
 window.resetChecklist = resetChecklist;
 window.newAnalysis = newAnalysis;
 window.runAnalysis = runAnalysis;
-window.toggleWorkspaceSelection = toggleWorkspaceSelection;
-window.toggleResourceGroup = toggleResourceGroup;
-window.toggleRGSelection = toggleRGSelection;
 window.filterWorkspaces = filterWorkspaces;
