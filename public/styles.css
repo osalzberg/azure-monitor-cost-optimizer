@@ -497,6 +497,11 @@ section {
     box-shadow: var(--shadow);
     width: 100%;
     box-sizing: border-box;
+    display: block;
+}
+
+section[hidden] {
+    display: none;
 }
 
 section h2 {
