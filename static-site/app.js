@@ -1272,8 +1272,10 @@ async function fetchAdvisorRecommendations(workspaces) {
                 const containsWorkspaceName = workspaceNames.some(name => resourceId.includes(`/workspaces/${name}`));
                 const isLogAnalytics = resourceId.includes('microsoft.operationalinsights/workspaces');
                 
-                // Include if it matches our workspace
-                if (matchesByName || matchesByResourceId || containsWorkspaceName) {
+                // Include if it matches our workspace AND is a Cost recommendation
+                const isCostCategory = (props.category || '').toLowerCase() === 'cost';
+                
+                if ((matchesByName || matchesByResourceId || containsWorkspaceName) && isCostCategory) {
                     seenIds.add(rec.id);
                     recommendations.push({
                         id: rec.id,
@@ -1290,7 +1292,9 @@ async function fetchAdvisorRecommendations(workspaces) {
                         savingsAmount: props.extendedProperties?.savingsAmount,
                         savingsCurrency: props.extendedProperties?.savingsCurrency
                     });
-                    console.log(`Advisor: ✅ ADDED - "${impactedValue}": ${props.shortDescription?.problem || rec.name}`);
+                    console.log(`Advisor: ✅ ADDED COST REC - "${impactedValue}": ${props.shortDescription?.problem || rec.name}`);
+                } else if (matchesByName || matchesByResourceId || containsWorkspaceName) {
+                    console.log(`Advisor: ⏭️ SKIPPED (not Cost category: ${props.category}) - "${impactedValue}": ${props.shortDescription?.problem || rec.name}`);
                 }
                 // Only include recommendations for the selected workspaces - removed the fallback that was including ALL Log Analytics recommendations
             }
