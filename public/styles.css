@@ -31,6 +31,9 @@ body {
     max-width: 1200px;
     margin: 0 auto;
     padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
 }
 
 /* Header Styles */
@@ -484,6 +487,7 @@ main {
     display: flex;
     flex-direction: column;
     gap: 30px;
+    width: 100%;
 }
 
 section {
@@ -491,6 +495,8 @@ section {
     border-radius: 12px;
     padding: 30px;
     box-shadow: var(--shadow);
+    width: 100%;
+    box-sizing: border-box;
 }
 
 section h2 {
