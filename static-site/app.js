@@ -1021,7 +1021,7 @@ async function fetchAdvisorRecommendations(workspaces) {
     
     for (const subscriptionId of subscriptionIds) {
         try {
-            // Fetch ALL cost recommendations for the subscription (removed filter to get everything)
+            // Fetch ALL recommendations for the subscription
             const response = await fetch(
                 `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01`,
                 {
@@ -1048,35 +1048,20 @@ async function fetchAdvisorRecommendations(workspaces) {
                 const solution = (props.shortDescription?.solution || '').toLowerCase();
                 const problem = (props.shortDescription?.problem || '').toLowerCase();
                 
-                // Check if it's related to any of our selected workspaces
-                const matchesWorkspace = workspaceNames.some(name => 
-                    resourceId.includes(name) || 
-                    impactedValue.includes(name) ||
-                    solution.includes(name) ||
-                    problem.includes(name)
-                ) || workspaceResourceIds.some(rid => resourceId.includes(rid.toLowerCase()));
+                console.log(`Advisor: Checking rec - impactedValue: ${impactedValue}, resourceId contains operationalinsights: ${resourceId.includes('operationalinsights')}`);
                 
-                // Check if it's related to Log Analytics or Monitor
-                const isLogAnalytics = resourceId.includes('microsoft.operationalinsights') ||
-                                       resourceId.includes('microsoft.monitor') ||
-                                       resourceId.includes('workspaces') ||
-                                       solution.includes('log analytics') ||
-                                       solution.includes('workspace') ||
-                                       problem.includes('log analytics') ||
-                                       problem.includes('workspace');
+                // Check if it's related to any of our selected workspaces by impactedValue (most reliable)
+                const matchesByImpactedValue = workspaceNames.some(name => impactedValue === name);
                 
-                // Include Cost recommendations that are relevant
-                const isCostRecommendation = props.category === 'Cost';
+                // Check if resourceId matches any workspace
+                const matchesByResourceId = workspaceResourceIds.some(rid => resourceId === rid) ||
+                                           workspaceNames.some(name => resourceId.includes(`/workspaces/${name}`));
                 
-                // Include if it matches workspace, is Log Analytics related, or is a cost recommendation
-                if (matchesWorkspace || isLogAnalytics || (isCostRecommendation && (
-                    solution.includes('commitment') ||
-                    solution.includes('retention') ||
-                    solution.includes('archive') ||
-                    solution.includes('basic log') ||
-                    solution.includes('data collection') ||
-                    solution.includes('ingestion')
-                ))) {
+                // Check if it's a Log Analytics workspace recommendation
+                const isLogAnalyticsResource = resourceId.includes('microsoft.operationalinsights/workspaces');
+                
+                // If it matches our workspace OR is a Log Analytics Cost recommendation, include it
+                if (matchesByImpactedValue || matchesByResourceId || (isLogAnalyticsResource && props.category === 'Cost')) {
                     seenIds.add(rec.id);
                     recommendations.push({
                         id: rec.id,
@@ -1091,7 +1076,7 @@ async function fetchAdvisorRecommendations(workspaces) {
                         lastUpdated: props.lastUpdated,
                         resourceGroup: extractResourceGroup(resourceId)
                     });
-                    console.log(`Advisor: Added recommendation - ${props.shortDescription?.solution || rec.name}`);
+                    console.log(`Advisor: ✅ Added recommendation - ${props.impactedValue}: ${props.shortDescription?.solution || rec.name}`);
                 }
             }
         } catch (error) {
