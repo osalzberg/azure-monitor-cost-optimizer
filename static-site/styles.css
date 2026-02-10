@@ -496,6 +496,7 @@ section {
     width: 100%;
     box-sizing: border-box;
     display: block;
+    border: none;
 }
 
 section[hidden] {
@@ -708,9 +709,9 @@ button[type="submit"]:disabled {
 }
 
 .recommendations-content {
-    padding: 20px;
+    padding: 10px 0;
     background: transparent;
-    border-radius: 8px;
+    border: none;
 }
 
 /* Force spacing between ALL elements inside recommendations */
