@@ -2326,8 +2326,10 @@ function formatMarkdown(text) {
         let body = content;
         
         body = body.replace(/\[TITLE\]([\s\S]*?)\[\/TITLE\]/g, (m, t) => { 
-            // Sanitize title: remove extra newlines and normalize whitespace
-            title = t.trim().replace(/\n+/g, ' ').replace(/\s+/g, ' '); 
+            // Sanitize title: remove extra newlines, normalize whitespace, and strip leading emojis (we add our own)
+            title = t.trim().replace(/\n+/g, ' ').replace(/\s+/g, ' ');
+            // Remove leading emoji if present (we add icon separately)
+            title = title.replace(/^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2702}-\u{27B0}\u{24C2}-\u{1F251}✅⚠️💡💰🚨📊🔍🗄️ℹ️]+\s*/gu, '');
             return ''; 
         });
         body = body.replace(/\[IMPACT\]([\s\S]*?)\[\/IMPACT\]/g, (m, i) => { impact = i.trim(); return ''; });

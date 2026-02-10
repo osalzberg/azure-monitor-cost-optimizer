@@ -816,8 +816,7 @@ button[type="submit"]:disabled {
 
 .rec-card-header {
     display: flex;
-    align-items: center;
-    flex-wrap: wrap;
+    align-items: flex-start;
     gap: 12px;
     padding: 16px 20px;
     background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
@@ -845,16 +844,18 @@ button[type="submit"]:disabled {
 }
 
 .rec-card-icon {
-    font-size: 1.5rem;
+    font-size: 1.3rem;
     flex-shrink: 0;
+    line-height: 1.4;
 }
 
 .rec-card-title {
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     font-weight: 600;
     color: #333;
     flex: 1;
-    min-width: 200px;
+    line-height: 1.4;
+    word-wrap: break-word;
 }
 
 .rec-card-impact {
@@ -862,9 +863,13 @@ button[type="submit"]:disabled {
     color: white;
     padding: 4px 12px;
     border-radius: 20px;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: 600;
-    white-space: nowrap;
+    white-space: normal;
+    max-width: 300px;
+    text-align: center;
+    flex-shrink: 0;
+    margin-left: auto;
 }
 
 /* Impact badge colors per card type */
