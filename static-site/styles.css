@@ -712,9 +712,25 @@ button[type="submit"]:disabled {
     background: #fafafa;
     border-radius: 8px;
     border-left: 4px solid var(--azure-blue);
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
+}
+
+/* Force spacing between ALL elements inside recommendations */
+.recommendations-content > * + * {
+    margin-top: 20px;
+}
+
+/* Extra spacing before each card */
+.recommendations-content .rec-card {
+    margin-top: 24px;
+    margin-bottom: 24px;
+}
+
+.recommendations-content .rec-card:first-child {
+    margin-top: 0;
+}
+
+.recommendations-content .rec-card:last-child {
+    margin-bottom: 0;
 }
 
 .recommendations-content h3 {
