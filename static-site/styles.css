@@ -37,6 +37,7 @@ body {
 header {
     padding: 20px;
     color: var(--white);
+    margin-bottom: 30px;
 }
 
 .header-top {
@@ -161,52 +162,6 @@ header h1 {
     font-family: 'Consolas', 'Monaco', monospace;
     font-size: 1.2rem;
     margin: 20px 0;
-}
-
-/* Token Input */
-.token-input {
-    width: 100%;
-    padding: 14px 16px;
-    border: 2px solid #ddd;
-    border-radius: 8px;
-    font-family: 'Consolas', 'Monaco', monospace;
-    font-size: 0.9rem;
-    resize: vertical;
-    min-height: 80px;
-    margin: 15px 0;
-    background: #f8f9fa;
-    color: #333;
-    box-sizing: border-box;
-    transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.token-input:focus {
-    outline: none;
-    border-color: var(--azure-blue);
-    box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.15);
-    background: #fff;
-}
-
-.token-input::placeholder {
-    color: #999;
-}
-
-.token-input.error {
-    border-color: #dc3545;
-    box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.15);
-}
-
-@keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    20%, 60% { transform: translateX(-5px); }
-    40%, 80% { transform: translateX(5px); }
-}
-
-.auth-step {
-    font-weight: 500;
-    color: #444;
-    margin-top: 20px;
-    margin-bottom: 5px;
 }
 
 /* Auth Status Indicator */
@@ -530,6 +485,7 @@ main {
     display: flex;
     flex-direction: column;
     gap: 30px;
+    width: 100%;
 }
 
 section {
@@ -537,6 +493,13 @@ section {
     border-radius: 12px;
     padding: 30px;
     box-shadow: var(--shadow);
+    width: 100%;
+    box-sizing: border-box;
+    display: block;
+}
+
+section[hidden] {
+    display: none;
 }
 
 section h2 {
@@ -802,18 +765,28 @@ button[type="submit"]:disabled {
 .rec-card {
     background: white;
     border-radius: 12px;
-    margin: 16px 0;
+    margin: 20px 0;
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     border: 1px solid #e0e0e0;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: block;
+}
+
+.rec-card + .rec-card {
+    margin-top: 25px;
+}
+
+.rec-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
 }
 
 .rec-card-header {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
+    display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 14px 18px;
+    gap: 12px;
+    padding: 16px 20px;
     background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     border-bottom: 1px solid #e0e0e0;
 }
@@ -839,46 +812,23 @@ button[type="submit"]:disabled {
 }
 
 .rec-card-icon {
-    font-size: 1.2rem;
+    font-size: 1.5rem;
 }
 
 .rec-card-title {
-    font-size: 1rem;
+    font-size: 1.1rem;
     font-weight: 600;
     color: #333;
+    flex: 1;
 }
 
 .rec-card-impact {
-    background: var(--azure-blue);
-    color: white;
-    padding: 4px 10px;
-    border-radius: 16px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 280px;
-}
-    flex-shrink: 0;
-    margin-left: auto;
-}
-
-/* Impact badge colors per card type */
-.rec-card-warning .rec-card-impact {
-    background: #e65100;
-}
-
-.rec-card-savings .rec-card-impact {
     background: var(--success-green);
-}
-
-.rec-card-info .rec-card-impact {
-    background: var(--azure-blue);
-}
-
-.rec-card-success .rec-card-impact {
-    background: #00897b;
+    color: white;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
 }
 
 .rec-card-body {
@@ -896,11 +846,18 @@ button[type="submit"]:disabled {
 }
 
 .rec-card-action {
-    padding: 12px 20px;
+    padding: 16px 20px;
     background: #f0f7ff;
     border-top: 1px solid #e0e0e0;
     color: var(--azure-dark);
     font-size: 0.95rem;
+    line-height: 1.6;
+}
+
+.rec-card-action strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--azure-blue);
 }
 
 .rec-card-docs {
@@ -916,19 +873,6 @@ button[type="submit"]:disabled {
 }
 
 .rec-card-docs a:hover {
-    text-decoration: underline;
-}
-
-/* Inline docs link (for docs links outside of cards) */
-.inline-docs-link {
-    display: inline;
-    color: var(--azure-blue);
-    text-decoration: none;
-    font-weight: 500;
-    font-size: 0.9em;
-}
-
-.inline-docs-link:hover {
     text-decoration: underline;
 }
 
@@ -1273,6 +1217,7 @@ footer {
     text-align: center;
     padding: 30px 20px;
     color: var(--white);
+    margin-top: 30px;
 }
 
 footer a {
@@ -1731,27 +1676,6 @@ body.dark-mode .form-group select:focus {
 }
 
 body.dark-mode .form-group label {
-    color: #b0bec5;
-}
-
-/* Dark mode token input */
-body.dark-mode .token-input {
-    background: #1e1e2e;
-    border-color: #424242;
-    color: #e0e0e0;
-}
-
-body.dark-mode .token-input:focus {
-    border-color: #64b5f6;
-    box-shadow: 0 0 0 3px rgba(100, 181, 246, 0.2);
-    background: #252535;
-}
-
-body.dark-mode .token-input::placeholder {
-    color: #666;
-}
-
-body.dark-mode .auth-step {
     color: #b0bec5;
 }
 
