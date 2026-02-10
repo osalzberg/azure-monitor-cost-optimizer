@@ -765,11 +765,16 @@ button[type="submit"]:disabled {
 .rec-card {
     background: white;
     border-radius: 12px;
-    margin: 16px 0;
+    margin: 20px 0;
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     border: 1px solid #e0e0e0;
     transition: transform 0.2s, box-shadow 0.2s;
+    display: block;
+}
+
+.rec-card + .rec-card {
+    margin-top: 25px;
 }
 
 .rec-card:hover {
