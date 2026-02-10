@@ -154,6 +154,12 @@ const analysisQueries = {
         | where QueryCount > 10
         | order by QueryCount desc
         | take 50
+    `,
+    // Check if LAQueryLogs is enabled - returns row count if enabled, empty if not
+    laQueryLogsStatus: `
+        LAQueryLogs
+        | where TimeGenerated > ago(7d)
+        | summarize RecordCount = count(), IsEnabled = true
     `
 };
 
@@ -346,6 +352,12 @@ ALWAYS analyze and report on ALL of these areas in order:
 - If a table is queried MORE than 5 times/day on average → DO NOT recommend Basic Logs
 - If a table has multiple distinct users querying it → likely used in dashboards, DO NOT recommend
 - Only recommend Basic Logs for tables that are RARELY queried (debugging/auditing purposes)
+
+**If LAQueryLogs is NOT enabled:**
+- We CANNOT determine query frequency - recommend enabling it first
+- LAQueryLogs captures all queries to the workspace (audit log)
+- To enable: Workspace → Diagnostic settings → Add "Query Audit" → Send to same workspace
+- Without this data, be CONSERVATIVE - don't strongly recommend Basic Logs
 
 Common high-volume candidates (if NOT frequently queried):
 - Container/Kubernetes: ContainerLogV2, ContainerLog, AKSAudit, AKSAuditAdmin, AKSControlPlane
@@ -591,9 +603,13 @@ function formatQueryDataForAI(allQueryData, dataSummary) {
             formatted += '\n';
         }
         
+        // Check LAQueryLogs status
+        const laQueryLogsEnabled = queryResults.laQueryLogsStatus?.rows?.length > 0;
+        
         // Table query frequency (for Basic Logs assessment)
         if (queryResults.tableQueryFrequency?.rows?.length > 0) {
             formatted += `**Table Query Frequency (last 30 days):**\n`;
+            formatted += `✅ LAQueryLogs is enabled - using actual query data for analysis\n`;
             formatted += `⚠️ Tables queried frequently should NOT be converted to Basic Logs\n`;
             const tableNameIdx = queryResults.tableQueryFrequency.columns?.indexOf('TableName') ?? 0;
             const queryCountIdx = queryResults.tableQueryFrequency.columns?.indexOf('QueryCount') ?? 1;
@@ -603,6 +619,11 @@ function formatQueryDataForAI(allQueryData, dataSummary) {
                 formatted += `- ${row[tableNameIdx]}: ${row[queryCountIdx]} queries (~${avgPerDay}/day)\n`;
             });
             formatted += '\n';
+        } else if (!laQueryLogsEnabled) {
+            formatted += `**⚠️ LAQueryLogs Not Enabled:**\n`;
+            formatted += `Cannot determine table query frequency - LAQueryLogs diagnostic is not enabled.\n`;
+            formatted += `Basic Logs recommendations will be conservative (assume tables may be queried).\n`;
+            formatted += `To enable: Workspace > Diagnostic settings > Add "Query Audit"\n\n`;
         }
     }
     
@@ -1222,7 +1243,8 @@ function summarizeQueryData(allQueryData) {
         totalIngestionGB: 0,
         byResourceGroup: {},
         topTables: [],
-        frequentlyQueriedTables: [] // New: track frequently queried tables
+        frequentlyQueriedTables: [], // Track frequently queried tables
+        laQueryLogsEnabled: false // Track if LAQueryLogs is enabled
     };
     
     const tableData = {};
@@ -1253,9 +1275,16 @@ function summarizeQueryData(allQueryData) {
             });
         }
         
+        // Check if LAQueryLogs is enabled for this workspace
+        const laQueryLogsStatus = queryResults.laQueryLogsStatus;
+        if (laQueryLogsStatus && laQueryLogsStatus.rows && laQueryLogsStatus.rows.length > 0) {
+            summary.laQueryLogsEnabled = true;
+        }
+        
         // Extract table query frequency data from LAQueryLogs
         const queryFreqData = queryResults.tableQueryFrequency;
         if (queryFreqData && queryFreqData.rows && queryFreqData.rows.length > 0) {
+            summary.laQueryLogsEnabled = true; // If we got frequency data, it's definitely enabled
             const tableNameIdx = queryFreqData.columns?.indexOf('TableName') ?? 0;
             const queryCountIdx = queryFreqData.columns?.indexOf('QueryCount') ?? 1;
             const usersIdx = queryFreqData.columns?.indexOf('DistinctUsers') ?? 2;
@@ -1383,6 +1412,7 @@ At 100 GB/day, you could save ~17% with the commitment tier.
     // Basic Logs Recommendation - only recommend for tables NOT frequently queried
     const debugTables = ['ContainerLogV2', 'AppTraces', 'AzureDiagnostics', 'Syslog'];
     const debugTableData = dataSummary.topTables.filter(t => debugTables.includes(t.name));
+    const laQueryLogsEnabled = dataSummary.laQueryLogsEnabled;
     
     // Filter out tables that are frequently queried (not suitable for Basic Logs)
     const frequentlyQueriedTables = dataSummary.frequentlyQueriedTables || [];
@@ -1396,7 +1426,38 @@ At 100 GB/day, you could save ~17% with the commitment tier.
         return queryInfo && queryInfo.avgQueriesPerDay >= 5;
     });
     
-    if (safeForBasicLogs.length > 0) {
+    // Show warning if LAQueryLogs is not enabled
+    if (!laQueryLogsEnabled && debugTableData.length > 0) {
+        const totalDebugGB = debugTableData.reduce((sum, t) => sum + t.gb, 0);
+        const potentialSavings = totalDebugGB * 2.76 * 0.5;
+        
+        recommendations += `[CARD:warning]
+[TITLE]⚠️ Enable LAQueryLogs for Accurate Basic Logs Analysis[/TITLE]
+[IMPACT]Potential ~$${potentialSavings.toFixed(2)}/month savings[/IMPACT]
+
+**LAQueryLogs is not enabled** - Cannot determine which tables are actively queried.
+
+Basic Logs candidates found (but need query frequency check):
+${debugTableData.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
+
+**Why this matters:**
+- Basic Logs tables cost ~50% less but have query limitations
+- Tables used in dashboards, alerts, or frequently queried should NOT use Basic Logs
+- Without LAQueryLogs, we can't tell if these tables are actively used
+
+**To enable LAQueryLogs:**
+1. Go to your Log Analytics workspace
+2. Diagnostic settings → Add diagnostic setting
+3. Enable "Query Audit" category → Send to same workspace
+
+After enabling, re-run this analysis in 7+ days for accurate recommendations.
+
+[ACTION]Enable LAQueryLogs diagnostic setting in each workspace[/ACTION]
+[DOCS]https://learn.microsoft.com/azure/azure-monitor/logs/query-audit[/DOCS]
+[/CARD]
+
+`;
+    } else if (safeForBasicLogs.length > 0) {
         const debugGB = safeForBasicLogs.reduce((sum, t) => sum + t.gb, 0);
         const savings = debugGB * 2.76 * 0.5; // Basic logs are ~50% cheaper
         
