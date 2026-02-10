@@ -1,6 +1,40 @@
 // Azure Monitor Cost Optimizer - Static Site Version
 // Uses token-based authentication (user provides Azure CLI token)
 
+// ============ GLOBAL ONCLICK HANDLERS (must be at top for immediate availability) ============
+// Copy the az command
+function copyCommand() {
+    const cmd = "az account get-access-token --resource https://management.azure.com --query accessToken -o tsv | pbcopy";
+    
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(cmd).then(() => {
+            const btn = document.querySelector('.copy-cli-btn');
+            if (btn) { btn.textContent = '✓ Copied!'; setTimeout(() => btn.textContent = '📋 Copy', 2000); }
+        }).catch(() => {
+            fallbackCopyCommand(cmd);
+        });
+    } else {
+        fallbackCopyCommand(cmd);
+    }
+}
+
+function fallbackCopyCommand(text) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+        document.execCommand('copy');
+        const btn = document.querySelector('.copy-cli-btn');
+        if (btn) { btn.textContent = '✓ Copied!'; setTimeout(() => btn.textContent = '📋 Copy', 2000); }
+    } catch (e) {
+        console.error('Copy failed:', e);
+    }
+    document.body.removeChild(textArea);
+}
+
 // App state
 let accessToken = null;
 let allSubscriptions = [];
@@ -189,47 +223,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// Copy the az command - must be global for onclick
-window.copyCommand = function() {
-    const cmd = "az account get-access-token --resource https://management.azure.com --query accessToken -o tsv | pbcopy";
-    
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(cmd).then(() => {
-            showCopyCmdSuccess();
-        }).catch(() => {
-            fallbackCopyCmd(cmd);
-        });
-    } else {
-        fallbackCopyCmd(cmd);
-    }
-};
-
-function fallbackCopyCmd(text) {
-    const textArea = document.createElement('textarea');
-    textArea.value = text;
-    textArea.style.position = 'fixed';
-    textArea.style.left = '-9999px';
-    document.body.appendChild(textArea);
-    textArea.select();
-    try {
-        document.execCommand('copy');
-        showCopyCmdSuccess();
-    } catch (e) {
-        console.error('Copy failed:', e);
-    }
-    document.body.removeChild(textArea);
-}
-
-function showCopyCmdSuccess() {
-    const btn = document.querySelector('.copy-cli-btn');
-    if (btn) {
-        btn.textContent = '✓ Copied!';
-        setTimeout(() => btn.textContent = '📋 Copy', 2000);
-    }
-}
-
-// Sign in with pasted token - must be global for onclick
-window.signInWithToken = function() {
+// Sign in with pasted token
+function signInWithToken() {
     const tokenInput = document.getElementById('tokenInput');
     if (!tokenInput) {
         console.error('Token input element not found');
