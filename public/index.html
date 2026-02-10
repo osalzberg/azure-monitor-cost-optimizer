@@ -19,9 +19,18 @@
                     </svg>
                     <h1>Azure Monitor Cost Optimizer</h1>
                 </div>
-                <div class="auth-status" id="authStatus">
-                    <span class="status-indicator checking" id="statusIndicator">●</span>
-                    <span id="statusText">Checking Azure CLI...</span>
+                <div class="auth-section">
+                    <div class="theme-toggle">
+                        <span class="theme-icon">☀️</span>
+                        <div class="theme-toggle-btn" id="themeToggle">
+                            <div class="theme-toggle-slider"></div>
+                        </div>
+                        <span class="theme-icon">🌙</span>
+                    </div>
+                    <div class="auth-status" id="authStatus">
+                        <span class="status-indicator checking" id="statusIndicator">●</span>
+                        <span id="statusText">Checking Azure CLI...</span>
+                    </div>
                 </div>
             </div>
             <p class="subtitle">Get AI-powered recommendations based on your actual Azure Monitor usage</p>
@@ -53,6 +62,13 @@
             <!-- Main Input Section -->
             <section class="input-section" id="inputSection" hidden>
                 <h2>Select Your Workspace</h2>
+                
+                <!-- Recent Analyses -->
+                <div id="recentAnalyses" class="recent-analyses" hidden>
+                    <h3>📋 Recent Analyses</h3>
+                    <div id="recentAnalysesList" class="recent-analyses-list"></div>
+                </div>
+                
                 <form id="azureForm">
                     <div class="form-group">
                         <label for="subscriptionFilter">Subscription</label>
@@ -111,17 +127,53 @@
 
             <section class="recommendations-section" id="recommendationsSection" hidden>
                 <h2>Cost Optimization Recommendations</h2>
+                
+                <!-- Cost Savings Counter -->
+                <div id="savingsCounter" class="savings-counter" hidden>
+                    <div class="savings-counter-main">
+                        <div class="savings-label">💰 Total Potential Savings</div>
+                        <div class="savings-amount" id="savingsAmount">$0.00</div>
+                        <div class="savings-period">per month</div>
+                    </div>
+                    <div class="savings-breakdown" id="savingsBreakdown"></div>
+                </div>
+                
                 <div class="recommendations-header">
                     <div class="workspace-info" id="resourceInfo"></div>
-                    <button id="copyBtn" class="copy-btn" title="Copy recommendations">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                        Copy
-                    </button>
+                    <div class="header-buttons">
+                        <button id="copyBtn" class="copy-btn" title="Copy recommendations as plain text">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            Copy
+                        </button>
+                        <button id="copyMarkdownBtn" class="copy-btn" title="Copy as Markdown">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            Markdown
+                        </button>
+                    </div>
                 </div>
                 <div id="recommendationsContent" class="recommendations-content"></div>
+                
+                <!-- Checklist Tracker -->
+                <div id="checklistTracker" class="checklist-tracker" hidden>
+                    <h3>📋 Implementation Checklist</h3>
+                    <p class="checklist-subtitle">Track your progress implementing these recommendations</p>
+                    <div id="checklistProgress" class="checklist-progress">
+                        <div class="progress-bar-container">
+                            <div id="checklistProgressBar" class="progress-bar" style="width: 0%"></div>
+                        </div>
+                        <span id="checklistProgressText" class="progress-text">0 of 0 completed (0%)</span>
+                    </div>
+                    <div id="checklistItems" class="checklist-items"></div>
+                    <button id="resetChecklistBtn" class="secondary-btn" style="margin-top: 10px;">Reset Checklist</button>
+                </div>
+                
                 <button id="newAnalysisBtn" class="secondary-btn">Start New Analysis</button>
             </section>
 

@@ -1528,3 +1528,188 @@ function newAnalysis() {
 function showError(message) {
     alert(message);
 }
+// ============ DARK MODE ============
+(function initializeDarkMode() {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+        document.body.classList.add('dark-mode');
+        updateThemeToggle(true);
+    }
+    const themeToggle = document.getElementById('themeToggle');
+    if (themeToggle) {
+        themeToggle.addEventListener('click', toggleDarkMode);
+    }
+})();
+
+function toggleDarkMode() {
+    document.body.classList.toggle('dark-mode');
+    const isDark = document.body.classList.contains('dark-mode');
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    updateThemeToggle(isDark);
+}
+
+function updateThemeToggle(isDark) {
+    const toggleBtn = document.getElementById('themeToggle');
+    if (toggleBtn) toggleBtn.classList.toggle('dark', isDark);
+}
+
+// ============ MARKDOWN EXPORT ============
+function copyRecommendationsAsMarkdown() {
+    const content = document.getElementById('recommendationsContent');
+    let markdown = '# Azure Monitor Cost Optimization Analysis\n\n';
+    
+    const resourceInfo = document.getElementById('resourceInfo');
+    if (resourceInfo) {
+        markdown += resourceInfo.innerText + '\n\n---\n\n';
+    }
+    
+    const cards = content.querySelectorAll('.rec-card');
+    cards.forEach(card => {
+        const icon = card.querySelector('.rec-card-icon')?.textContent || '';
+        const title = card.querySelector('.rec-card-title')?.textContent || '';
+        const impact = card.querySelector('.rec-card-impact')?.textContent || '';
+        const body = card.querySelector('.rec-card-body');
+        const action = card.querySelector('.rec-card-action');
+        
+        markdown += `## ${icon} ${title}\n\n`;
+        if (impact) markdown += `**${impact}**\n\n`;
+        if (body) markdown += body.innerText + '\n\n';
+        if (action) markdown += `### 📋 Action\n\n${action.textContent.replace('📋 Action:', '').trim()}\n\n`;
+        markdown += '---\n\n';
+    });
+    
+    navigator.clipboard.writeText(markdown).then(() => {
+        const btn = document.getElementById('copyMarkdownBtn');
+        if (btn) {
+            const orig = btn.innerHTML;
+            btn.innerHTML = '✓ Copied!';
+            setTimeout(() => btn.innerHTML = orig, 2000);
+        }
+    });
+}
+
+// ============ CHECKLIST TRACKER ============
+let currentChecklistId = null;
+
+function generateChecklistFromRecommendations() {
+    const cards = document.querySelectorAll('.rec-card-savings, .rec-card-warning');
+    return Array.from(cards).map((card, i) => ({
+        id: `item_${Date.now()}_${i}`,
+        icon: card.querySelector('.rec-card-icon')?.textContent || '',
+        title: card.querySelector('.rec-card-title')?.textContent || '',
+        impact: card.querySelector('.rec-card-impact')?.textContent || '',
+        description: card.querySelector('.rec-card-action')?.textContent?.replace('📋 Action:', '').trim() || '',
+        completed: false
+    })).filter(item => item.title && item.description);
+}
+
+function displayChecklist(items) {
+    const tracker = document.getElementById('checklistTracker');
+    if (!items?.length || !tracker) return tracker && (tracker.hidden = true);
+    
+    const container = document.getElementById('checklistItems');
+    if (!container) return;
+    
+    container.innerHTML = items.map(item => `
+        <div class="checklist-item ${item.completed ? 'completed' : ''}" data-item-id="${item.id}">
+            <input type="checkbox" class="checklist-checkbox" ${item.completed ? 'checked' : ''}>
+            <div class="checklist-item-content">
+                <div class="checklist-item-title">${item.icon} ${item.title}</div>
+                <div class="checklist-item-description">${item.description}</div>
+                ${item.impact ? `<span class="checklist-item-impact">${item.impact}</span>` : ''}
+            </div>
+        </div>
+    `).join('');
+    
+    container.querySelectorAll('.checklist-item').forEach(div => {
+        const cb = div.querySelector('.checklist-checkbox');
+        cb.addEventListener('change', () => toggleChecklistItem(div.dataset.itemId));
+        div.addEventListener('click', e => { if (e.target !== cb) { cb.checked = !cb.checked; toggleChecklistItem(div.dataset.itemId); }});
+    });
+    
+    updateChecklistProgress(items);
+    tracker.hidden = false;
+}
+
+function toggleChecklistItem(id) {
+    const cl = getChecklistFromStorage();
+    if (!cl) return;
+    const item = cl.items.find(i => i.id === id);
+    if (item) {
+        item.completed = !item.completed;
+        saveChecklistToStorage(cl);
+        document.querySelector(`[data-item-id="${id}"]`)?.classList.toggle('completed', item.completed);
+        updateChecklistProgress(cl.items);
+    }
+}
+
+function updateChecklistProgress(items) {
+    const total = items.length;
+    const done = items.filter(i => i.completed).length;
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    const bar = document.getElementById('checklistProgressBar');
+    const text = document.getElementById('checklistProgressText');
+    if (bar) bar.style.width = `${pct}%`;
+    if (text) text.textContent = `${done} of ${total} completed (${pct}%)`;
+}
+
+function saveChecklistToStorage(cl) {
+    localStorage.setItem(`checklist_${currentChecklistId}`, JSON.stringify(cl));
+}
+
+function getChecklistFromStorage() {
+    if (!currentChecklistId) return null;
+    const s = localStorage.getItem(`checklist_${currentChecklistId}`);
+    return s ? JSON.parse(s) : null;
+}
+
+function resetChecklist() {
+    if (!currentChecklistId || !confirm('Reset checklist?')) return;
+    localStorage.removeItem(`checklist_${currentChecklistId}`);
+    const items = generateChecklistFromRecommendations();
+    saveChecklistToStorage({ id: currentChecklistId, items, createdAt: Date.now() });
+    displayChecklist(items);
+}
+
+// ============ SAVINGS COUNTER ============
+function displaySavingsCounter() {
+    const cards = document.querySelectorAll('.rec-card-savings');
+    const counter = document.getElementById('savingsCounter');
+    if (!cards.length || !counter) return counter && (counter.hidden = true);
+    
+    let total = 0;
+    cards.forEach(card => {
+        const m = card.querySelector('.rec-card-impact')?.textContent?.match(/\$[\d,]+\.?\d*/);
+        if (m) total += parseFloat(m[0].replace(/[$,]/g, '')) || 0;
+    });
+    
+    if (total > 0) {
+        animateSavingsCounter(total);
+        counter.hidden = false;
+    }
+}
+
+function animateSavingsCounter(target) {
+    const el = document.getElementById('savingsAmount');
+    if (!el) return;
+    let curr = 0;
+    const steps = 30, inc = target / steps;
+    const timer = setInterval(() => {
+        curr += inc;
+        if (curr >= target) { curr = target; clearInterval(timer); }
+        el.textContent = `$${curr.toFixed(2)}`;
+    }, 33);
+}
+
+// ============ ENHANCE showRecommendations ============
+const _origShowRecs = showRecommendations;
+showRecommendations = function(recs, ws, data) {
+    _origShowRecs(recs, ws, data);
+    setTimeout(() => {
+        currentChecklistId = `analysis_${Date.now()}`;
+        const items = generateChecklistFromRecommendations();
+        saveChecklistToStorage({ id: currentChecklistId, items, createdAt: Date.now() });
+        displayChecklist(items);
+        displaySavingsCounter();
+    }, 100);
+};

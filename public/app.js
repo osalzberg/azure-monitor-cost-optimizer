@@ -24,8 +24,10 @@ const retryBtn = document.getElementById('retryBtn');
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
+    initializeDarkMode();
     await checkAzureConnection();
     setupEventListeners();
+    loadRecentAnalyses();
 });
 
 // Add session header to all API requests
@@ -650,11 +652,145 @@ function setupEventListeners() {
     // Copy button
     document.getElementById('copyBtn').addEventListener('click', copyRecommendations);
     
+    // Copy as Markdown button
+    document.getElementById('copyMarkdownBtn').addEventListener('click', copyRecommendationsAsMarkdown);
+    
+    // Reset checklist button
+    document.getElementById('resetChecklistBtn').addEventListener('click', resetChecklist);
+    
     // New analysis button
     document.getElementById('newAnalysisBtn').addEventListener('click', () => {
         recommendationsSection.hidden = true;
         inputSection.hidden = false;
     });
+}
+
+// Checklist management
+let currentChecklistId = null;
+
+function generateChecklistFromRecommendations() {
+    const cards = document.querySelectorAll('.rec-card-savings, .rec-card-warning');
+    const checklistItems = [];
+    
+    cards.forEach((card, index) => {
+        const icon = card.querySelector('.rec-card-icon')?.textContent || '';
+        const title = card.querySelector('.rec-card-title')?.textContent || '';
+        const impact = card.querySelector('.rec-card-impact')?.textContent || '';
+        const action = card.querySelector('.rec-card-action')?.textContent?.replace('📋 Action:', '').trim() || '';
+        
+        // Only add savings and warning items to checklist
+        if (title && action) {
+            checklistItems.push({
+                id: `item_${Date.now()}_${index}`,
+                icon,
+                title,
+                impact,
+                description: action,
+                completed: false
+            });
+        }
+    });
+    
+    return checklistItems;
+}
+
+function displayChecklist(items) {
+    if (!items || items.length === 0) {
+        document.getElementById('checklistTracker').hidden = true;
+        return;
+    }
+    
+    const checklistTracker = document.getElementById('checklistTracker');
+    const checklistItems = document.getElementById('checklistItems');
+    
+    checklistItems.innerHTML = '';
+    
+    items.forEach(item => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = `checklist-item ${item.completed ? 'completed' : ''}`;
+        itemDiv.dataset.itemId = item.id;
+        
+        itemDiv.innerHTML = `
+            <input type="checkbox" class="checklist-checkbox" ${item.completed ? 'checked' : ''}>
+            <div class="checklist-item-content">
+                <div class="checklist-item-title">${item.icon} ${item.title}</div>
+                <div class="checklist-item-description">${item.description}</div>
+                ${item.impact ? `<span class="checklist-item-impact">${item.impact}</span>` : ''}
+            </div>
+        `;
+        
+        // Add click handler
+        const checkbox = itemDiv.querySelector('.checklist-checkbox');
+        checkbox.addEventListener('change', () => toggleChecklistItem(item.id));
+        itemDiv.addEventListener('click', (e) => {
+            if (e.target !== checkbox) {
+                checkbox.checked = !checkbox.checked;
+                toggleChecklistItem(item.id);
+            }
+        });
+        
+        checklistItems.appendChild(itemDiv);
+    });
+    
+    updateChecklistProgress(items);
+    checklistTracker.hidden = false;
+}
+
+function toggleChecklistItem(itemId) {
+    const savedChecklist = getChecklistFromStorage();
+    if (!savedChecklist) return;
+    
+    const item = savedChecklist.items.find(i => i.id === itemId);
+    if (item) {
+        item.completed = !item.completed;
+        saveChecklistToStorage(savedChecklist);
+        
+        // Update UI
+        const itemDiv = document.querySelector(`[data-item-id="${itemId}"]`);
+        if (itemDiv) {
+            itemDiv.classList.toggle('completed', item.completed);
+        }
+        
+        updateChecklistProgress(savedChecklist.items);
+    }
+}
+
+function updateChecklistProgress(items) {
+    const total = items.length;
+    const completed = items.filter(i => i.completed).length;
+    const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+    
+    document.getElementById('checklistProgressBar').style.width = `${percentage}%`;
+    document.getElementById('checklistProgressText').textContent = 
+        `${completed} of ${total} completed (${percentage}%)`;
+}
+
+function saveChecklistToStorage(checklist) {
+    localStorage.setItem(`checklist_${currentChecklistId}`, JSON.stringify(checklist));
+}
+
+function getChecklistFromStorage() {
+    if (!currentChecklistId) return null;
+    const saved = localStorage.getItem(`checklist_${currentChecklistId}`);
+    return saved ? JSON.parse(saved) : null;
+}
+
+function resetChecklist() {
+    if (!currentChecklistId) return;
+    
+    if (confirm('Are you sure you want to reset the checklist? All progress will be lost.')) {
+        localStorage.removeItem(`checklist_${currentChecklistId}`);
+        
+        // Regenerate checklist
+        const items = generateChecklistFromRecommendations();
+        const checklist = {
+            id: currentChecklistId,
+            items: items,
+            createdAt: Date.now()
+        };
+        saveChecklistToStorage(checklist);
+        displayChecklist(items);
+    }
 }
 
 // Run the full analysis
@@ -778,6 +914,9 @@ async function runAnalysis() {
         // Show recommendations
         progressSection.hidden = true;
         showRecommendations(recommendations, workspacesToAnalyze, dataSummary);
+        
+        // Save to history
+        saveAnalysisToHistory(workspacesToAnalyze, dataSummary);
         
     } catch (error) {
         console.error('Analysis error:', error);
@@ -1054,6 +1193,127 @@ function showRecommendations(recommendations, workspaces, dataSummary) {
     content.innerHTML = summaryHtml + formatMarkdown(recommendations);
     
     recommendationsSection.hidden = false;
+    
+    // Generate and display checklist and savings counter
+    setTimeout(() => {
+        currentChecklistId = `analysis_${Date.now()}`;
+        const items = generateChecklistFromRecommendations();
+        
+        // Check if there's a saved checklist for this analysis
+        let savedChecklist = getChecklistFromStorage();
+        if (!savedChecklist || savedChecklist.items.length !== items.length) {
+            // Create new checklist
+            savedChecklist = {
+                id: currentChecklistId,
+                items: items,
+                createdAt: Date.now()
+            };
+            saveChecklistToStorage(savedChecklist);
+        } else {
+            // Use saved progress
+            currentChecklistId = savedChecklist.id;
+        }
+        
+        displayChecklist(savedChecklist.items);
+        
+        // Calculate and display savings
+        displaySavingsCounter();
+    }, 100);
+}
+
+// Calculate and display total savings counter
+function displaySavingsCounter() {
+    const cards = document.querySelectorAll('.rec-card-savings');
+    if (cards.length === 0) {
+        document.getElementById('savingsCounter').hidden = true;
+        return;
+    }
+    
+    let totalSavings = 0;
+    const savingsItems = [];
+    
+    cards.forEach(card => {
+        const title = card.querySelector('.rec-card-title')?.textContent || '';
+        const impactText = card.querySelector('.rec-card-impact')?.textContent || '';
+        
+        // Extract dollar amount from impact text
+        const dollarMatch = impactText.match(/\$[\d,]+\.?\d*/);
+        if (dollarMatch) {
+            const amount = parseFloat(dollarMatch[0].replace(/[$,]/g, ''));
+            if (!isNaN(amount)) {
+                totalSavings += amount;
+                savingsItems.push({
+                    title: title,
+                    amount: amount,
+                    description: impactText
+                });
+            }
+        }
+        
+        // Also check for percentage savings
+        const percentMatch = impactText.match(/(\d+)%/);
+        if (percentMatch && !dollarMatch) {
+            // Try to find dollar amount in card body
+            const bodyText = card.querySelector('.rec-card-body')?.textContent || '';
+            const bodyDollarMatch = bodyText.match(/\$[\d,]+\.?\d*/);
+            if (bodyDollarMatch) {
+                const amount = parseFloat(bodyDollarMatch[0].replace(/[$,]/g, ''));
+                if (!isNaN(amount)) {
+                    totalSavings += amount;
+                    savingsItems.push({
+                        title: title,
+                        amount: amount,
+                        description: impactText
+                    });
+                }
+            }
+        }
+    });
+    
+    if (totalSavings > 0) {
+        // Animate counter
+        animateSavingsCounter(totalSavings);
+        
+        // Display breakdown if multiple items
+        const breakdownContainer = document.getElementById('savingsBreakdown');
+        if (savingsItems.length > 1) {
+            breakdownContainer.innerHTML = savingsItems.map(item => `
+                <div class="savings-item">
+                    <div class="savings-item-title">${item.title}</div>
+                    <div class="savings-item-amount">$${item.amount.toFixed(2)}</div>
+                    <div class="savings-item-description">${item.description}</div>
+                </div>
+            `).join('');
+        } else {
+            breakdownContainer.innerHTML = '';
+        }
+        
+        document.getElementById('savingsCounter').hidden = false;
+    } else {
+        document.getElementById('savingsCounter').hidden = true;
+    }
+}
+
+// Animate the savings counter with count-up effect
+function animateSavingsCounter(targetAmount) {
+    const element = document.getElementById('savingsAmount');
+    const duration = 1000; // 1 second
+    const steps = 30;
+    const increment = targetAmount / steps;
+    let current = 0;
+    let step = 0;
+    
+    const timer = setInterval(() => {
+        step++;
+        current += increment;
+        
+        if (step >= steps) {
+            current = targetAmount;
+            clearInterval(timer);
+        }
+        
+        element.textContent = `$${current.toFixed(2)}`;
+    }, duration / steps);
 }
 
 // Format multi-workspace query results for AI (grouped by RG)
@@ -1243,6 +1503,163 @@ function copyRecommendations() {
     });
 }
 
+// Copy recommendations as Markdown
+function copyRecommendationsAsMarkdown() {
+    const content = document.getElementById('recommendationsContent');
+    const markdown = htmlToMarkdown(content);
+    
+    navigator.clipboard.writeText(markdown).then(() => {
+        const btn = document.getElementById('copyMarkdownBtn');
+        const originalHTML = btn.innerHTML;
+        btn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Copied!
+        `;
+        setTimeout(() => {
+            btn.innerHTML = originalHTML;
+        }, 2000);
+    });
+}
+
+// Convert HTML content to Markdown
+function htmlToMarkdown(element) {
+    let markdown = '';
+    
+    // Get workspace info header
+    const resourceInfo = document.getElementById('resourceInfo');
+    if (resourceInfo) {
+        markdown += '# Azure Monitor Cost Optimization Analysis\n\n';
+        markdown += resourceInfo.innerText.replace(/\s+/g, ' ').trim() + '\n\n';
+        markdown += '---\n\n';
+    }
+    
+    // Process each recommendation card
+    const cards = element.querySelectorAll('.rec-card');
+    cards.forEach(card => {
+        const type = card.className.match(/rec-card-(warning|savings|info|success)/)?.[1] || 'info';
+        const icon = card.querySelector('.rec-card-icon')?.textContent || '';
+        const title = card.querySelector('.rec-card-title')?.textContent || '';
+        const impact = card.querySelector('.rec-card-impact')?.textContent || '';
+        const body = card.querySelector('.rec-card-body');
+        const action = card.querySelector('.rec-card-action');
+        const docs = card.querySelector('.rec-card-docs a');
+        
+        // Title with icon
+        markdown += `## ${icon} ${title}\n\n`;
+        
+        // Impact badge
+        if (impact) {
+            markdown += `**${impact}**\n\n`;
+        }
+        
+        // Body content
+        if (body) {
+            markdown += convertBodyToMarkdown(body) + '\n\n';
+        }
+        
+        // Action
+        if (action) {
+            const actionText = action.textContent.replace('📋 Action:', '').trim();
+            markdown += `### 📋 Action\n\n${actionText}\n\n`;
+        }
+        
+        // Documentation link
+        if (docs) {
+            markdown += `📖 [Documentation](${docs.href})\n\n`;
+        }
+        
+        markdown += '---\n\n';
+    });
+    
+    // Process data summary table if present
+    const summaryTable = element.querySelector('.summary-table');
+    if (summaryTable) {
+        markdown += '## 📊 Data Summary\n\n';
+        markdown += convertTableToMarkdown(summaryTable) + '\n\n';
+    }
+    
+    return markdown;
+}
+
+// Convert body HTML to Markdown
+function convertBodyToMarkdown(bodyElement) {
+    let markdown = '';
+    
+    const children = Array.from(bodyElement.children);
+    children.forEach(child => {
+        const tagName = child.tagName.toLowerCase();
+        
+        switch (tagName) {
+            case 'p':
+                markdown += child.textContent.trim() + '\n\n';
+                break;
+                
+            case 'ul':
+            case 'ol':
+                const items = child.querySelectorAll('li');
+                items.forEach((item, index) => {
+                    const bullet = tagName === 'ul' ? '-' : `${index + 1}.`;
+                    markdown += `${bullet} ${item.textContent.trim()}\n`;
+                });
+                markdown += '\n';
+                break;
+                
+            case 'table':
+                markdown += convertTableToMarkdown(child) + '\n\n';
+                break;
+                
+            case 'pre':
+                const code = child.querySelector('code');
+                if (code) {
+                    markdown += '```\n' + code.textContent.trim() + '\n```\n\n';
+                }
+                break;
+                
+            case 'h1':
+            case 'h2':
+            case 'h3':
+            case 'h4':
+            case 'h5':
+            case 'h6':
+                const level = parseInt(tagName[1]);
+                markdown += '#'.repeat(level) + ' ' + child.textContent.trim() + '\n\n';
+                break;
+                
+            default:
+                if (child.textContent.trim()) {
+                    markdown += child.textContent.trim() + '\n\n';
+                }
+        }
+    });
+    
+    return markdown.trim();
+}
+
+// Convert HTML table to Markdown table
+function convertTableToMarkdown(table) {
+    let markdown = '';
+    
+    // Headers
+    const headers = table.querySelectorAll('thead th');
+    if (headers.length > 0) {
+        markdown += '| ' + Array.from(headers).map(th => th.textContent.trim()).join(' | ') + ' |\n';
+        markdown += '| ' + Array.from(headers).map(() => '---').join(' | ') + ' |\n';
+    }
+    
+    // Rows
+    const rows = table.querySelectorAll('tbody tr');
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length > 0) {
+            markdown += '| ' + Array.from(cells).map(td => td.textContent.trim()).join(' | ') + ' |\n';
+        }
+    });
+    
+    return markdown;
+}
+
 // Show error message
 function showError(message) {
     alert(message);
@@ -1285,3 +1702,172 @@ function formatQueryResultsForAI(results) {
     
     return formatted;
 }
+
+// ============ DARK MODE ============
+
+function initializeDarkMode() {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+        document.body.classList.add('dark-mode');
+        updateThemeToggle(true);
+    }
+    
+    // Theme toggle button
+    const themeToggle = document.getElementById('themeToggle');
+    if (themeToggle) {
+        themeToggle.addEventListener('click', toggleDarkMode);
+    }
+}
+
+function toggleDarkMode() {
+    document.body.classList.toggle('dark-mode');
+    const isDark = document.body.classList.contains('dark-mode');
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    updateThemeToggle(isDark);
+}
+
+function updateThemeToggle(isDark) {
+    const toggleBtn = document.getElementById('themeToggle');
+    if (toggleBtn) {
+        if (isDark) {
+            toggleBtn.classList.add('dark');
+        } else {
+            toggleBtn.classList.remove('dark');
+        }
+    }
+}
+
+// ============ RECENT ANALYSES ============
+
+function saveAnalysisToHistory(workspaces, dataSummary) {
+    const analysis = {
+        id: Date.now(),
+        timestamp: Date.now(),
+        workspaceNames: workspaces.map(ws => ws.name),
+        workspaceCount: workspaces.length,
+        resourceGroups: [...new Set(workspaces.map(ws => ws.resourceGroup))],
+        totalGB: dataSummary ? dataSummary.totalIngestionGB : 0,
+        subscriptionId: subscriptionSelect.value
+    };
+    
+    const history = getAnalysisHistory();
+    history.unshift(analysis);
+    
+    // Keep only last 10
+    const trimmed = history.slice(0, 10);
+    localStorage.setItem('analysisHistory', JSON.stringify(trimmed));
+    
+    loadRecentAnalyses();
+}
+
+function getAnalysisHistory() {
+    const saved = localStorage.getItem('analysisHistory');
+    return saved ? JSON.parse(saved) : [];
+}
+
+function loadRecentAnalyses() {
+    const history = getAnalysisHistory();
+    const container = document.getElementById('recentAnalyses');
+    const list = document.getElementById('recentAnalysesList');
+    
+    if (history.length === 0) {
+        container.hidden = true;
+        return;
+    }
+    
+    list.innerHTML = history.map(analysis => {
+        const date = new Date(analysis.timestamp);
+        const timeAgo = formatTimeAgo(date);
+        const wsCount = analysis.workspaceCount;
+        const rgCount = analysis.resourceGroups.length;
+        
+        return `
+            <div class="recent-analysis-item" data-analysis-id="${analysis.id}">
+                <div class="recent-analysis-info">
+                    <div class="recent-analysis-title">
+                        ${wsCount} workspace${wsCount !== 1 ? 's' : ''} in ${rgCount} resource group${rgCount !== 1 ? 's' : ''}
+                    </div>
+                    <div class="recent-analysis-details">
+                        ${analysis.workspaceNames.slice(0, 3).join(', ')}${analysis.workspaceCount > 3 ? ` +${analysis.workspaceCount - 3} more` : ''}
+                        ${analysis.totalGB > 0 ? ` • ${analysis.totalGB.toFixed(2)} GB` : ''}
+                    </div>
+                </div>
+                <div class="recent-analysis-date">${timeAgo}</div>
+                <button class="recent-analysis-delete" onclick="deleteAnalysis(${analysis.id}, event)" title="Delete">🗑️</button>
+            </div>
+        `;
+    }).join('');
+    
+    // Add click handlers to load analyses
+    list.querySelectorAll('.recent-analysis-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            if (e.target.classList.contains('recent-analysis-delete')) return;
+            const analysisId = parseInt(item.dataset.analysisId);
+            loadAnalysisFromHistory(analysisId);
+        });
+    });
+    
+    container.hidden = false;
+}
+
+function formatTimeAgo(date) {
+    const seconds = Math.floor((Date.now() - date) / 1000);
+    
+    if (seconds < 60) return 'Just now';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+    
+    return date.toLocaleDateString();
+}
+
+async function loadAnalysisFromHistory(analysisId) {
+    const history = getAnalysisHistory();
+    const analysis = history.find(a => a.id === analysisId);
+    
+    if (!analysis) return;
+    
+    // Select the subscription
+    if (analysis.subscriptionId) {
+        subscriptionSelect.value = analysis.subscriptionId;
+        const selectedSub = allSubscriptions.find(s => s.id === analysis.subscriptionId);
+        if (selectedSub) {
+            subscriptionFilter.value = selectedSub.name;
+        }
+        
+        // Load workspaces
+        await loadWorkspaces(analysis.subscriptionId);
+        
+        // Wait a bit for workspaces to render
+        setTimeout(() => {
+            // Select the workspaces
+            analysis.workspaceNames.forEach(wsName => {
+                const checkbox = Array.from(workspaceList.querySelectorAll('.ws-checkbox')).find(cb => {
+                    const ws = currentWorkspaces.find(w => w.id === cb.value);
+                    return ws && ws.name === wsName;
+                });
+                
+                if (checkbox) {
+                    checkbox.checked = true;
+                    updateRGCheckbox(checkbox.dataset.rg);
+                }
+            });
+            
+            updateSelectedWorkspaces();
+            
+            // Scroll to form
+            azureForm.scrollIntoView({ behavior: 'smooth' });
+        }, 500);
+    }
+}
+
+window.deleteAnalysis = function(analysisId, event) {
+    event.stopPropagation();
+    
+    if (confirm('Delete this analysis from history?')) {
+        const history = getAnalysisHistory();
+        const filtered = history.filter(a => a.id !== analysisId);
+        localStorage.setItem('analysisHistory', JSON.stringify(filtered));
+        loadRecentAnalyses();
+    }
+};
