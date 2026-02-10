@@ -341,14 +341,19 @@ ALWAYS analyze and report on ALL of these areas in order:
 - If < 50 GB/day: Pay-as-you-go is optimal
 - Calculate exact savings: (daily_gb * 30 * $2.76) vs commitment tier price
 
-## 2. BASIC LOGS CANDIDATES (REQUIRED) - CHECK QUERY FREQUENCY FIRST!
+## 2. BASIC LOGS CANDIDATES (REQUIRED) - CHECK ALERTS AND QUERY FREQUENCY FIRST!
 ⚠️ CRITICAL: Basic Logs have major limitations:
 - Cannot be used in dashboards, workbooks, or alert rules
 - Limited KQL operators supported
 - Query cost of ~$0.006/GB scanned
 - Only 8-day interactive retention
 
-**BEFORE recommending Basic Logs, CHECK the "Table Query Frequency" data:**
+**FIRST, CHECK "Tables Used in Alert Rules":**
+- If a table is listed in "Tables Used in Alert Rules" → NEVER recommend Basic Logs
+- Converting these tables would BREAK existing alerts
+- This is the #1 priority check - alert breakage is critical
+
+**THEN, CHECK the "Table Query Frequency" data:**
 - If a table is queried MORE than 5 times/day on average → DO NOT recommend Basic Logs
 - If a table has multiple distinct users querying it → likely used in dashboards, DO NOT recommend
 - Only recommend Basic Logs for tables that are RARELY queried (debugging/auditing purposes)
@@ -359,7 +364,7 @@ ALWAYS analyze and report on ALL of these areas in order:
 - To enable: Workspace → Diagnostic settings → Add "Query Audit" → Send to same workspace
 - Without this data, be CONSERVATIVE - don't strongly recommend Basic Logs
 
-Common high-volume candidates (if NOT frequently queried):
+Common high-volume candidates (if NOT in alerts and NOT frequently queried):
 - Container/Kubernetes: ContainerLogV2, ContainerLog, AKSAudit, AKSAuditAdmin, AKSControlPlane
 - Application: AppTraces, Syslog, AzureDiagnostics
 - Storage: StorageBlobLogs, StorageFileLogs, StorageQueueLogs, StorageTableLogs  
@@ -635,6 +640,20 @@ function formatQueryDataForAI(allQueryData, dataSummary) {
             formatted += `- **${t.tableName}**: ${t.queryCount} queries (avg ${t.avgQueriesPerDay.toFixed(1)}/day)\n`;
         });
         formatted += '\n';
+    }
+    
+    // Tables used in alert rules
+    if (dataSummary.tablesInAlerts?.length > 0) {
+        formatted += '\n### 🚨 Tables Used in Alert Rules (NEVER use Basic Logs)\n';
+        formatted += 'These tables are used in scheduled query rules (alerts) and MUST remain on Analytics tier:\n\n';
+        dataSummary.tablesInAlerts.forEach(table => {
+            const alerts = (dataSummary.alertDetails || []).filter(a => 
+                a.tables.some(t => t.toLowerCase() === table.toLowerCase())
+            );
+            const alertNames = alerts.map(a => a.displayName || a.name).slice(0, 3);
+            formatted += `- **${table}**: Used in ${alerts.length} alert(s) - ${alertNames.join(', ')}${alerts.length > 3 ? '...' : ''}\n`;
+        });
+        formatted += '\n⚠️ Converting these to Basic Logs would BREAK existing alerts!\n\n';
     }
     
     return formatted;
@@ -1018,9 +1037,24 @@ async function runAnalysis() {
             updateProgress('progressAdvisor', 'complete', 'Advisor recommendations unavailable');
         }
         
+        // Step 2.5: Fetch scheduled query rules (alerts) to detect tables used in alerts
+        updateProgress('progressAdvisor', 'running', 'Detecting tables used in alerts...');
+        let alertTablesInfo = { tablesInAlerts: [], alertDetails: [] };
+        try {
+            alertTablesInfo = await fetchScheduledQueryRules(selectedWorkspaces);
+            if (alertTablesInfo.tablesInAlerts.length > 0) {
+                updateProgress('progressAdvisor', 'complete', 
+                    `Found ${advisorRecommendations.length} Advisor rec(s), ${alertTablesInfo.tablesInAlerts.length} tables in alerts`);
+            }
+        } catch (e) {
+            console.warn('Could not fetch scheduled query rules:', e);
+        }
+        
         // Check if we got any actual data
         const dataSummary = summarizeQueryData(allQueryData);
         dataSummary.advisorRecommendations = advisorRecommendations;
+        dataSummary.tablesInAlerts = alertTablesInfo.tablesInAlerts;
+        dataSummary.alertDetails = alertTablesInfo.alertDetails;
         
         console.log('Data summary:', dataSummary);
         
@@ -1186,6 +1220,123 @@ function formatAdvisorRecommendations(advisorRecs) {
     output += '[/CARD]\n';
     
     return output;
+}
+
+// ============ SCHEDULED QUERY RULES (ALERTS) DETECTION ============
+// Fetches alert rules to identify tables that are used in alerts (cannot use Basic Logs)
+async function fetchScheduledQueryRules(workspaces) {
+    const tablesInAlerts = new Set();
+    const alertDetails = [];
+    
+    // Get workspace resource IDs for matching
+    const workspaceResourceIds = workspaces.map(ws => ws.resourceId.toLowerCase());
+    
+    // Get unique subscription IDs from workspaces
+    const subscriptionIds = [...new Set(workspaces.map(ws => {
+        const match = ws.resourceId.match(/\/subscriptions\/([^\/]+)/);
+        return match ? match[1] : null;
+    }).filter(Boolean))];
+    
+    for (const subscriptionId of subscriptionIds) {
+        try {
+            // Fetch scheduled query rules (log alerts)
+            const response = await fetch(
+                `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Insights/scheduledQueryRules?api-version=2023-03-15-preview`,
+                {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                }
+            );
+            
+            if (!response.ok) {
+                console.warn(`ScheduledQueryRules API returned ${response.status}`);
+                continue;
+            }
+            
+            const data = await response.json();
+            const rules = data.value || [];
+            
+            for (const rule of rules) {
+                const props = rule.properties || {};
+                
+                // Check if this alert targets one of our workspaces
+                const scopes = props.scopes || [];
+                const targetWorkspace = scopes.some(scope => 
+                    workspaceResourceIds.some(wsId => scope.toLowerCase().includes(wsId) || wsId.includes(scope.toLowerCase()))
+                );
+                
+                if (!targetWorkspace) continue;
+                
+                // Extract the query and find table names
+                const query = props.criteria?.allOf?.[0]?.query || '';
+                const tables = extractTablesFromQuery(query);
+                
+                if (tables.length > 0) {
+                    tables.forEach(t => tablesInAlerts.add(t));
+                    alertDetails.push({
+                        name: rule.name,
+                        displayName: props.displayName || rule.name,
+                        tables: tables,
+                        enabled: props.enabled !== false,
+                        severity: props.severity
+                    });
+                }
+            }
+        } catch (error) {
+            console.error(`Error fetching scheduled query rules:`, error);
+        }
+    }
+    
+    console.log(`Alert Detection: Found ${tablesInAlerts.size} tables used in ${alertDetails.length} alert rules`);
+    return { tablesInAlerts: Array.from(tablesInAlerts), alertDetails };
+}
+
+// Extract table names from a KQL query
+function extractTablesFromQuery(query) {
+    if (!query) return [];
+    
+    const tables = new Set();
+    
+    // Common patterns to find table names in KQL:
+    // 1. Table name at the start of a line or after | 
+    // 2. Table name after "from" keyword
+    // 3. Union statements
+    
+    // Known Log Analytics table name patterns
+    const tablePatterns = [
+        // Start of query or after pipe - table name followed by whitespace, pipe, or newline
+        /(?:^|\|)\s*([A-Z][a-zA-Z0-9_]+)\s*(?:\||$|where|project|summarize|extend|join|take|top|limit|order|sort|distinct|count|mv-expand|parse|evaluate)/gim,
+        // Union statements
+        /union\s+(?:kind\s*=\s*\w+\s+)?([A-Z][a-zA-Z0-9_]+(?:\s*,\s*[A-Z][a-zA-Z0-9_]+)*)/gi,
+        // Explicit table() function
+        /table\s*\(\s*["']?([A-Z][a-zA-Z0-9_]+)["']?\s*\)/gi,
+        // Join clauses
+        /join\s+(?:kind\s*=\s*\w+\s+)?([A-Z][a-zA-Z0-9_]+)/gi
+    ];
+    
+    // Known table prefixes
+    const knownPrefixes = ['Container', 'App', 'Azure', 'Security', 'Syslog', 'Perf', 'Heartbeat', 'Event', 
+                          'Usage', 'AKS', 'Storage', 'AZFW', 'CDB', 'AAD', 'Signin', 'AZM', 'AVS', 'Databricks',
+                          'LA', 'Kusto', 'Arc', 'Windows', 'Linux', 'VM', 'SQL', 'Network', 'DNS', 'HTTP'];
+    
+    tablePatterns.forEach(pattern => {
+        let match;
+        while ((match = pattern.exec(query)) !== null) {
+            const potentialTables = match[1].split(/\s*,\s*/);
+            potentialTables.forEach(t => {
+                const tableName = t.trim();
+                // Filter out KQL keywords and operators
+                const keywords = ['where', 'project', 'summarize', 'extend', 'join', 'take', 'top', 'limit', 
+                                 'order', 'sort', 'distinct', 'count', 'let', 'set', 'print', 'render',
+                                 'ago', 'now', 'datetime', 'timespan', 'true', 'false', 'null', 'and', 'or', 'not'];
+                if (tableName && !keywords.includes(tableName.toLowerCase()) && 
+                    /^[A-Z][a-zA-Z0-9_]+$/.test(tableName) && tableName.length > 2) {
+                    tables.add(tableName);
+                }
+            });
+        }
+    });
+    
+    return Array.from(tables);
 }
 
 // Query a workspace using Azure Resource Manager API (works with management token)
@@ -1409,36 +1560,84 @@ At 100 GB/day, you could save ~17% with the commitment tier.
 `;
     }
     
-    // Basic Logs Recommendation - only recommend for tables NOT frequently queried
+    // Basic Logs Recommendation - only recommend for tables NOT frequently queried or used in alerts
     const debugTables = ['ContainerLogV2', 'AppTraces', 'AzureDiagnostics', 'Syslog'];
     const debugTableData = dataSummary.topTables.filter(t => debugTables.includes(t.name));
     const laQueryLogsEnabled = dataSummary.laQueryLogsEnabled;
+    const tablesInAlerts = (dataSummary.tablesInAlerts || []).map(t => t.toLowerCase());
+    const alertDetails = dataSummary.alertDetails || [];
     
     // Filter out tables that are frequently queried (not suitable for Basic Logs)
     const frequentlyQueriedTables = dataSummary.frequentlyQueriedTables || [];
+    
+    // Check if table is used in alerts
+    const isTableInAlerts = (tableName) => {
+        return tablesInAlerts.some(alertTable => 
+            alertTable.toLowerCase() === tableName.toLowerCase() ||
+            alertTable.toLowerCase().includes(tableName.toLowerCase()) ||
+            tableName.toLowerCase().includes(alertTable.toLowerCase())
+        );
+    };
+    
+    // Tables safe for Basic Logs: not frequently queried AND not used in alerts
     const safeForBasicLogs = debugTableData.filter(t => {
         const queryInfo = frequentlyQueriedTables.find(q => q.tableName.toLowerCase() === t.name.toLowerCase());
-        // If table is queried more than 5 times per day on average, it's too frequently used
-        return !queryInfo || queryInfo.avgQueriesPerDay < 5;
+        const frequentlyQueried = queryInfo && queryInfo.avgQueriesPerDay >= 5;
+        const usedInAlerts = isTableInAlerts(t.name);
+        return !frequentlyQueried && !usedInAlerts;
     });
+    
+    // Tables NOT safe due to frequent queries
     const notSafeForBasicLogs = debugTableData.filter(t => {
         const queryInfo = frequentlyQueriedTables.find(q => q.tableName.toLowerCase() === t.name.toLowerCase());
         return queryInfo && queryInfo.avgQueriesPerDay >= 5;
     });
     
+    // Tables NOT safe due to alert usage
+    const tablesUsedInAlerts = debugTableData.filter(t => isTableInAlerts(t.name));
+    
+    // Show warning about tables used in alerts FIRST (highest priority)
+    if (tablesUsedInAlerts.length > 0) {
+        recommendations += `[CARD:warning]
+[TITLE]🚨 Tables Used in Alert Rules - DO NOT Use Basic Logs[/TITLE]
+[IMPACT]Would break ${alertDetails.filter(a => a.enabled).length} active alert(s)[/IMPACT]
+
+These tables are used in **scheduled query rules (alerts)** and **cannot** use Basic Logs:
+
+${tablesUsedInAlerts.map(t => {
+    const alerts = alertDetails.filter(a => 
+        a.tables.some(at => at.toLowerCase() === t.name.toLowerCase())
+    );
+    const alertNames = alerts.map(a => a.displayName || a.name).slice(0, 3);
+    return `- **${t.name}**: ${t.gb.toFixed(2)} GB - Used in: ${alertNames.join(', ')}${alerts.length > 3 ? ` (+${alerts.length - 3} more)` : ''}`;
+}).join('\n')}
+
+**Why this matters:**
+- Basic Logs cannot be used in alert rules
+- Converting these tables would **break your existing alerts**
+- Alerts would fail to execute and you'd lose monitoring coverage
+
+[ACTION]Keep these tables on Analytics tier to maintain alert functionality[/ACTION]
+[/CARD]
+
+`;
+    }
+    
     // Show warning if LAQueryLogs is not enabled
     if (!laQueryLogsEnabled && debugTableData.length > 0) {
-        const totalDebugGB = debugTableData.reduce((sum, t) => sum + t.gb, 0);
-        const potentialSavings = totalDebugGB * 2.76 * 0.5;
-        
-        recommendations += `[CARD:warning]
+        const tablesNotInAlerts = debugTableData.filter(t => !isTableInAlerts(t.name));
+        if (tablesNotInAlerts.length > 0) {
+            const totalDebugGB = tablesNotInAlerts.reduce((sum, t) => sum + t.gb, 0);
+            const potentialSavings = totalDebugGB * 2.76 * 0.5;
+            
+            recommendations += `[CARD:warning]
 [TITLE]⚠️ Enable LAQueryLogs for Accurate Basic Logs Analysis[/TITLE]
 [IMPACT]Potential ~$${potentialSavings.toFixed(2)}/month savings[/IMPACT]
 
 **LAQueryLogs is not enabled** - Cannot determine which tables are actively queried.
 
 Basic Logs candidates found (but need query frequency check):
-${debugTableData.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
+${tablesNotInAlerts.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')}
 
 **Why this matters:**
 - Basic Logs tables cost ~50% less but have query limitations
@@ -1475,7 +1674,9 @@ ${safeForBasicLogs.map(t => `- **${t.name}**: ${t.gb.toFixed(2)} GB`).join('\n')
 - Query cost of ~$0.006/GB scanned
 - 8-day interactive retention only
 
-✅ These tables appear to be **infrequently queried** based on LAQueryLogs analysis.
+✅ These tables are **safe to convert**:
+- Not used in any detected alert rules
+- Infrequently queried (based on LAQueryLogs)
 
 [ACTION]Configure Basic Logs for debug/verbose tables in Log Analytics workspace settings[/ACTION]
 [DOCS]https://learn.microsoft.com/azure/azure-monitor/logs/basic-logs-configure[/DOCS]
