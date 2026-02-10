@@ -712,6 +712,18 @@ button[type="submit"]:disabled {
     background: #fafafa;
     border-radius: 8px;
     border-left: 4px solid var(--azure-blue);
+    display: block;
+}
+
+/* Ensure cards inside recommendations have proper spacing */
+.recommendations-content > .rec-card,
+.recommendations-content .rec-card {
+    margin-top: 20px !important;
+    margin-bottom: 20px !important;
+}
+
+.recommendations-content > .rec-card:first-child {
+    margin-top: 0 !important;
 }
 
 .recommendations-content h3 {
