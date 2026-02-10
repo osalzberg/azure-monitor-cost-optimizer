@@ -1074,26 +1074,8 @@ async function fetchAdvisorRecommendations(workspaces) {
                         savingsCurrency: props.extendedProperties?.savingsCurrency
                     });
                     console.log(`Advisor: ✅ ADDED - "${impactedValue}": ${props.shortDescription?.problem || rec.name}`);
-                } else if (isLogAnalytics && props.category === 'Cost') {
-                    // Also include any Log Analytics Cost recommendations we might have missed
-                    seenIds.add(rec.id);
-                    recommendations.push({
-                        id: rec.id,
-                        name: rec.name,
-                        category: props.category || 'Cost',
-                        impact: props.impact || 'Medium',
-                        impactedResource: props.impactedValue || extractResourceName(resourceId),
-                        resourceId: resourceId,
-                        problem: props.shortDescription?.problem || '',
-                        solution: props.shortDescription?.solution || '',
-                        extendedProperties: props.extendedProperties || {},
-                        lastUpdated: props.lastUpdated,
-                        resourceGroup: extractResourceGroup(resourceId),
-                        savingsAmount: props.extendedProperties?.savingsAmount,
-                        savingsCurrency: props.extendedProperties?.savingsCurrency
-                    });
-                    console.log(`Advisor: ✅ ADDED (Log Analytics Cost) - "${impactedValue}": ${props.shortDescription?.problem || rec.name}`);
                 }
+                // Only include recommendations for the selected workspaces - removed the fallback that was including ALL Log Analytics recommendations
             }
         } catch (error) {
             console.error(`Error fetching Advisor for subscription ${subscriptionId}:`, error);
@@ -1598,7 +1580,10 @@ function formatMarkdown(text) {
     text = text.replace(/\[ACTION\]([^\[]+)/g, '<div class="standalone-action"><strong>📋 Action:</strong> $1</div>');
     
     // Handle any [DOCS] tags outside of cards - convert to clickable link
-    text = text.replace(/\[DOCS\](https?:\/\/[^\s\[]+)/g, '<div class="standalone-docs"><a href="$1" target="_blank">📖 $1</a></div>');
+    // Support both [DOCS]url[/DOCS] and markdown-style [DOCS](url) formats
+    text = text.replace(/\[DOCS\]\((https?:\/\/[^)]+)\)/g, '<a href="$1" target="_blank" class="inline-docs-link">📖 Documentation</a>');
+    text = text.replace(/\[DOCS\](https?:\/\/[^\s\[]+)\[\/DOCS\]/g, '<a href="$1" target="_blank" class="inline-docs-link">📖 Documentation</a>');
+    text = text.replace(/\[DOCS\](https?:\/\/[^\s\[]+)/g, '<a href="$1" target="_blank" class="inline-docs-link">📖 Documentation</a>');
     
     // Clean up any remaining empty lines
     text = text.replace(/\n\s*\n\s*\n/g, '\n\n');

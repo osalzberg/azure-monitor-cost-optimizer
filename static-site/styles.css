@@ -855,6 +855,19 @@ button[type="submit"]:disabled {
     text-decoration: underline;
 }
 
+/* Inline docs link (for docs links outside of cards) */
+.inline-docs-link {
+    display: inline;
+    color: var(--azure-blue);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.9em;
+}
+
+.inline-docs-link:hover {
+    text-decoration: underline;
+}
+
 /* KQL Query Block */
 .kql-block {
     margin: 16px 0;
