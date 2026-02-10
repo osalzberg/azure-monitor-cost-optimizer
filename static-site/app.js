@@ -2314,13 +2314,19 @@ function formatMarkdown(text) {
     // Fix inline numbered lists (e.g., "1. foo 2. bar 3. baz" -> separate lines)
     text = text.replace(/(\d+)\.\s+([^0-9]+?)(?=\s+\d+\.\s|$)/g, '\n$1. $2\n');
     
-    // Process recommendation sections (replacing cards with simpler sections)
+    // Process recommendation sections (using top border instead of left to prevent stacking)
     text = text.replace(/\[CARD:(warning|savings|info|success)\]([\s\S]*?)\[\/CARD\]/g, (match, type, content) => {
         const colors = {
             warning: '#ff9800',
             savings: '#4caf50',
             info: '#2196f3',
             success: '#00bcd4'
+        };
+        const bgColors = {
+            warning: '#fff8e1',
+            savings: '#e8f5e9',
+            info: '#e3f2fd',
+            success: '#e0f7fa'
         };
         const icons = {
             warning: '⚠️',
@@ -2346,15 +2352,15 @@ function formatMarkdown(text) {
         
         body = body.trim();
         
-        // Build simple section HTML
-        let html = `<div class="rec-section rec-section-${type}" style="border-left: 4px solid ${colors[type]}; padding: 16px 20px; margin: 24px 0; background: #fff; border-radius: 0 8px 8px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">`;
-        html += `<h3 style="margin: 0 0 8px 0; font-size: 1.1rem; color: #333;">${icons[type]} ${title || 'Recommendation'}`;
-        if (impact) html += ` <span style="background: ${colors[type]}; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.8rem; margin-left: 10px; font-weight: 600;">${impact}</span>`;
+        // Build section with TOP border and background color - no left border
+        let html = `</p><div style="border-top: 4px solid ${colors[type]}; background: ${bgColors[type]}; padding: 20px; margin: 30px 0; border-radius: 8px;">`;
+        html += `<h3 style="margin: 0 0 12px 0; font-size: 1.1rem; color: #333; display: flex; align-items: center; flex-wrap: wrap; gap: 10px;">${icons[type]} ${title || 'Recommendation'}`;
+        if (impact) html += ` <span style="background: ${colors[type]}; color: white; padding: 3px 12px; border-radius: 12px; font-size: 0.8rem; font-weight: 600;">${impact}</span>`;
         html += `</h3>`;
-        if (body) html += `<div style="color: #555; line-height: 1.6; margin-bottom: 12px;">${formatCardBody(body)}</div>`;
-        if (action) html += `<div style="background: #f0f7ff; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 0.95rem;"><strong>📋 Action:</strong> ${action}</div>`;
-        if (docs) html += `<div style="margin-top: 10px;"><a href="${docs}" target="_blank" style="color: #0078d4; text-decoration: none;">📖 Documentation →</a></div>`;
-        html += `</div>`;
+        if (body) html += `<div style="color: #444; line-height: 1.7;">${formatCardBody(body)}</div>`;
+        if (action) html += `<div style="background: rgba(255,255,255,0.7); padding: 12px 16px; border-radius: 6px; margin-top: 16px; font-size: 0.95rem;"><strong>📋 Action:</strong> ${action}</div>`;
+        if (docs) html += `<div style="margin-top: 12px;"><a href="${docs}" target="_blank" style="color: #0078d4; text-decoration: none; font-weight: 500;">📖 Documentation →</a></div>`;
+        html += `</div><p>`;
         
         return html;
     });
