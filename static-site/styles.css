@@ -765,7 +765,7 @@ button[type="submit"]:disabled {
 .rec-card {
     background: white;
     border-radius: 12px;
-    margin: 20px 0;
+    margin: 20px 0 !important;
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     border: 1px solid #e0e0e0;
@@ -774,7 +774,7 @@ button[type="submit"]:disabled {
 }
 
 .rec-card + .rec-card {
-    margin-top: 25px;
+    margin-top: 25px !important;
 }
 
 .rec-card:hover {
