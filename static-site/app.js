@@ -2243,7 +2243,11 @@ function formatMarkdown(text) {
         let docs = '';
         let body = content;
         
-        body = body.replace(/\[TITLE\]([\s\S]*?)\[\/TITLE\]/g, (m, t) => { title = t.trim(); return ''; });
+        body = body.replace(/\[TITLE\]([\s\S]*?)\[\/TITLE\]/g, (m, t) => { 
+            // Sanitize title: remove extra newlines and normalize whitespace
+            title = t.trim().replace(/\n+/g, ' ').replace(/\s+/g, ' '); 
+            return ''; 
+        });
         body = body.replace(/\[IMPACT\]([\s\S]*?)\[\/IMPACT\]/g, (m, i) => { impact = i.trim(); return ''; });
         body = body.replace(/\[ACTION\]([\s\S]*?)\[\/ACTION\]/g, (m, a) => { action = a.trim(); return ''; });
         body = body.replace(/\[DOCS\]([\s\S]*?)\[\/DOCS\]/g, (m, d) => { docs = d.trim(); return ''; });

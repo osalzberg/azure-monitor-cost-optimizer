@@ -817,6 +817,7 @@ button[type="submit"]:disabled {
 .rec-card-header {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 12px;
     padding: 16px 20px;
     background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
@@ -845,6 +846,7 @@ button[type="submit"]:disabled {
 
 .rec-card-icon {
     font-size: 1.5rem;
+    flex-shrink: 0;
 }
 
 .rec-card-title {
@@ -852,6 +854,7 @@ button[type="submit"]:disabled {
     font-weight: 600;
     color: #333;
     flex: 1;
+    min-width: 200px;
 }
 
 .rec-card-impact {
