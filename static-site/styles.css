@@ -809,12 +809,30 @@ button[type="submit"]:disabled {
 }
 
 .rec-card-impact {
-    background: var(--success-green);
+    background: var(--azure-blue);
     color: white;
     padding: 4px 12px;
     border-radius: 20px;
     font-size: 0.85rem;
     font-weight: 600;
+    white-space: nowrap;
+}
+
+/* Impact badge colors per card type */
+.rec-card-warning .rec-card-impact {
+    background: #e65100;
+}
+
+.rec-card-savings .rec-card-impact {
+    background: var(--success-green);
+}
+
+.rec-card-info .rec-card-impact {
+    background: var(--azure-blue);
+}
+
+.rec-card-success .rec-card-impact {
+    background: #00897b;
 }
 
 .rec-card-body {
