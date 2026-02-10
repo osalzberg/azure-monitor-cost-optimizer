@@ -1099,10 +1099,17 @@ async function fetchAdvisorRecommendations(workspaces) {
         }
     }
     
-    // Also fetch recommendations specifically for each workspace
+    // Fetch recommendations specifically for each workspace using multiple API approaches
     for (const ws of workspaces) {
+        // Extract subscription and resource group from resourceId
+        const subMatch = ws.resourceId.match(/\/subscriptions\/([^\/]+)/);
+        const rgMatch = ws.resourceId.match(/\/resourceGroups\/([^\/]+)/i);
+        const subscriptionId = subMatch ? subMatch[1] : null;
+        const resourceGroup = rgMatch ? rgMatch[1] : ws.resourceGroup;
+        
+        // Approach 1: Direct workspace resource recommendations
         try {
-            console.log(`Fetching Advisor recommendations for workspace: ${ws.name}`);
+            console.log(`Fetching Advisor recommendations for workspace: ${ws.name} (direct)`);
             const response = await fetch(
                 `https://management.azure.com${ws.resourceId}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01`,
                 {
@@ -1110,36 +1117,118 @@ async function fetchAdvisorRecommendations(workspaces) {
                 }
             );
             
-            if (!response.ok) {
-                console.warn(`Advisor API returned ${response.status} for workspace ${ws.name}`);
-                continue;
-            }
-            
-            const data = await response.json();
-            console.log(`Advisor: Found ${data.value?.length || 0} recommendations for workspace ${ws.name}`);
-            
-            for (const rec of (data.value || [])) {
-                if (seenIds.has(rec.id)) continue;
-                seenIds.add(rec.id);
+            if (response.ok) {
+                const data = await response.json();
+                console.log(`Advisor (direct): Found ${data.value?.length || 0} recommendations for workspace ${ws.name}`);
                 
-                const props = rec.properties || {};
-                recommendations.push({
-                    id: rec.id,
-                    name: rec.name,
-                    category: props.category || 'Cost',
-                    impact: props.impact || 'Medium',
-                    impactedResource: ws.name,
-                    resourceId: ws.resourceId,
-                    problem: props.shortDescription?.problem || '',
-                    solution: props.shortDescription?.solution || '',
-                    extendedProperties: props.extendedProperties || {},
-                    lastUpdated: props.lastUpdated,
-                    resourceGroup: ws.resourceGroup
-                });
-                console.log(`Advisor: Added workspace-specific recommendation - ${props.shortDescription?.solution || rec.name}`);
+                for (const rec of (data.value || [])) {
+                    if (seenIds.has(rec.id)) continue;
+                    seenIds.add(rec.id);
+                    
+                    const props = rec.properties || {};
+                    recommendations.push({
+                        id: rec.id,
+                        name: rec.name,
+                        category: props.category || 'Cost',
+                        impact: props.impact || 'Medium',
+                        impactedResource: ws.name,
+                        resourceId: ws.resourceId,
+                        problem: props.shortDescription?.problem || '',
+                        solution: props.shortDescription?.solution || '',
+                        extendedProperties: props.extendedProperties || {},
+                        lastUpdated: props.lastUpdated,
+                        resourceGroup: ws.resourceGroup
+                    });
+                    console.log(`Advisor: Added - ${props.shortDescription?.solution || props.shortDescription?.problem || rec.name}`);
+                }
+            } else {
+                console.warn(`Advisor (direct) returned ${response.status} for workspace ${ws.name}`);
             }
         } catch (error) {
-            console.warn(`Could not fetch Advisor for workspace ${ws.name}:`, error);
+            console.warn(`Error fetching direct Advisor for ${ws.name}:`, error);
+        }
+        
+        // Approach 2: Filter subscription recommendations by resource group and workspace
+        if (subscriptionId) {
+            try {
+                console.log(`Fetching Advisor recommendations filtered by resource: ${ws.name}`);
+                // Use $filter to get recommendations for this specific resource
+                const filterUrl = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01&$filter=ResourceId eq '${encodeURIComponent(ws.resourceId)}'`;
+                const response = await fetch(filterUrl, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log(`Advisor (filtered): Found ${data.value?.length || 0} recommendations for ${ws.name}`);
+                    
+                    for (const rec of (data.value || [])) {
+                        if (seenIds.has(rec.id)) continue;
+                        seenIds.add(rec.id);
+                        
+                        const props = rec.properties || {};
+                        recommendations.push({
+                            id: rec.id,
+                            name: rec.name,
+                            category: props.category || 'Cost',
+                            impact: props.impact || 'Medium',
+                            impactedResource: ws.name,
+                            resourceId: ws.resourceId,
+                            problem: props.shortDescription?.problem || '',
+                            solution: props.shortDescription?.solution || '',
+                            extendedProperties: props.extendedProperties || {},
+                            lastUpdated: props.lastUpdated,
+                            resourceGroup: ws.resourceGroup
+                        });
+                        console.log(`Advisor (filtered): Added - ${props.shortDescription?.solution || props.shortDescription?.problem || rec.name}`);
+                    }
+                }
+            } catch (error) {
+                console.warn(`Error fetching filtered Advisor for ${ws.name}:`, error);
+            }
+        }
+        
+        // Approach 3: Get recommendations scoped to the resource group
+        if (subscriptionId && resourceGroup) {
+            try {
+                const rgUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01`;
+                const response = await fetch(rgUrl, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log(`Advisor (RG): Found ${data.value?.length || 0} recommendations in resource group ${resourceGroup}`);
+                    
+                    for (const rec of (data.value || [])) {
+                        if (seenIds.has(rec.id)) continue;
+                        
+                        const props = rec.properties || {};
+                        const recResourceId = (props.resourceMetadata?.resourceId || '').toLowerCase();
+                        
+                        // Only include if it's for this specific workspace
+                        if (recResourceId.includes(ws.name.toLowerCase()) || recResourceId.includes('operationalinsights')) {
+                            seenIds.add(rec.id);
+                            recommendations.push({
+                                id: rec.id,
+                                name: rec.name,
+                                category: props.category || 'Cost',
+                                impact: props.impact || 'Medium',
+                                impactedResource: props.impactedValue || ws.name,
+                                resourceId: recResourceId || ws.resourceId,
+                                problem: props.shortDescription?.problem || '',
+                                solution: props.shortDescription?.solution || '',
+                                extendedProperties: props.extendedProperties || {},
+                                lastUpdated: props.lastUpdated,
+                                resourceGroup: resourceGroup
+                            });
+                            console.log(`Advisor (RG): Added - ${props.shortDescription?.solution || props.shortDescription?.problem || rec.name}`);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.warn(`Error fetching RG Advisor for ${ws.name}:`, error);
+            }
         }
     }
     
