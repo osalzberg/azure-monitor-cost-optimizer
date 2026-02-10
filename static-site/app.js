@@ -2314,8 +2314,14 @@ function formatMarkdown(text) {
     // Fix inline numbered lists (e.g., "1. foo 2. bar 3. baz" -> separate lines)
     text = text.replace(/(\d+)\.\s+([^0-9]+?)(?=\s+\d+\.\s|$)/g, '\n$1. $2\n');
     
-    // Process recommendation cards
+    // Process recommendation sections (replacing cards with simpler sections)
     text = text.replace(/\[CARD:(warning|savings|info|success)\]([\s\S]*?)\[\/CARD\]/g, (match, type, content) => {
+        const colors = {
+            warning: '#ff9800',
+            savings: '#4caf50',
+            info: '#2196f3',
+            success: '#00bcd4'
+        };
         const icons = {
             warning: '⚠️',
             savings: '💰',
@@ -2330,9 +2336,7 @@ function formatMarkdown(text) {
         let body = content;
         
         body = body.replace(/\[TITLE\]([\s\S]*?)\[\/TITLE\]/g, (m, t) => { 
-            // Sanitize title: remove extra newlines, normalize whitespace, and strip leading emojis (we add our own)
             title = t.trim().replace(/\n+/g, ' ').replace(/\s+/g, ' ');
-            // Remove leading emoji if present (we add icon separately)
             title = title.replace(/^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2702}-\u{27B0}\u{24C2}-\u{1F251}✅⚠️💡💰🚨📊🔍🗄️ℹ️]+\s*/gu, '');
             return ''; 
         });
@@ -2342,15 +2346,14 @@ function formatMarkdown(text) {
         
         body = body.trim();
         
-        let html = `<div class="rec-card rec-card-${type}">`;
-        html += `<div class="rec-card-header">`;
-        html += `<span class="rec-card-icon">${icons[type]}</span>`;
-        html += `<span class="rec-card-title">${title || 'Recommendation'}</span>`;
-        if (impact) html += `<span class="rec-card-impact">${impact}</span>`;
-        html += `</div>`;
-        if (body) html += `<div class="rec-card-body">${formatCardBody(body)}</div>`;
-        if (action) html += `<div class="rec-card-action"><strong>📋 Action:</strong> ${action}</div>`;
-        if (docs) html += `<div class="rec-card-docs"><a href="${docs}" target="_blank">📖 Documentation</a></div>`;
+        // Build simple section HTML
+        let html = `<div class="rec-section rec-section-${type}" style="border-left: 4px solid ${colors[type]}; padding: 16px 20px; margin: 24px 0; background: #fff; border-radius: 0 8px 8px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">`;
+        html += `<h3 style="margin: 0 0 8px 0; font-size: 1.1rem; color: #333;">${icons[type]} ${title || 'Recommendation'}`;
+        if (impact) html += ` <span style="background: ${colors[type]}; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.8rem; margin-left: 10px; font-weight: 600;">${impact}</span>`;
+        html += `</h3>`;
+        if (body) html += `<div style="color: #555; line-height: 1.6; margin-bottom: 12px;">${formatCardBody(body)}</div>`;
+        if (action) html += `<div style="background: #f0f7ff; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 0.95rem;"><strong>📋 Action:</strong> ${action}</div>`;
+        if (docs) html += `<div style="margin-top: 10px;"><a href="${docs}" target="_blank" style="color: #0078d4; text-decoration: none;">📖 Documentation →</a></div>`;
         html += `</div>`;
         
         return html;
