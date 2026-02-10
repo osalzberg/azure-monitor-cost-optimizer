@@ -846,11 +846,18 @@ button[type="submit"]:disabled {
 }
 
 .rec-card-action {
-    padding: 12px 20px;
+    padding: 16px 20px;
     background: #f0f7ff;
     border-top: 1px solid #e0e0e0;
     color: var(--azure-dark);
     font-size: 0.95rem;
+    line-height: 1.6;
+}
+
+.rec-card-action strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--azure-blue);
 }
 
 .rec-card-docs {
