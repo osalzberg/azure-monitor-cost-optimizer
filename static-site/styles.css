@@ -709,9 +709,8 @@ button[type="submit"]:disabled {
 
 .recommendations-content {
     padding: 20px;
-    background: #fafafa;
+    background: transparent;
     border-radius: 8px;
-    border-left: 4px solid var(--azure-blue);
 }
 
 /* Force spacing between ALL elements inside recommendations */
