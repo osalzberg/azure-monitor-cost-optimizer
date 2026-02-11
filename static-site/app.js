@@ -2163,7 +2163,7 @@ let analyzedWorkspaceNames = [];
 // Populate workspace filter dropdown
 function populateWorkspaceFilter(workspaces) {
     console.log('populateWorkspaceFilter called with:', workspaces);
-    const filter = document.getElementById('workspaceFilter');
+    const filter = document.getElementById('recWorkspaceFilter');
     console.log('Filter element found:', filter);
     if (!filter) return;
     
@@ -2192,7 +2192,7 @@ function populateWorkspaceFilter(workspaces) {
 
 // Filter recommendations by workspace
 function filterRecommendations() {
-    const filter = document.getElementById('workspaceFilter');
+    const filter = document.getElementById('recWorkspaceFilter');
     const content = document.getElementById('recommendationsContent');
     
     if (!filter || !content || !originalRecommendationsHTML) return;
