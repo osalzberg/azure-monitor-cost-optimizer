@@ -729,6 +729,20 @@ button[type="submit"]:disabled {
     margin: 0 0 8px 0;
 }
 
+.rec-body {
+    margin: 6px 0;
+    color: #555;
+    line-height: 1.6;
+    font-size: 0.95rem;
+}
+
+.rec-body code {
+    background: #f0f0f0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
 .rec-badge {
     display: inline-block;
     background: #0078d4;

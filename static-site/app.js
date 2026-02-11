@@ -2343,6 +2343,20 @@ function formatMarkdown(text) {
         // Output flat HTML - hr, h4, p elements - NOTHING that can nest
         let html = `<hr class="rec-divider">`;
         html += `<h4 class="rec-title">${icons[type]} ${title || 'Recommendation'}${impact ? ` <span class="rec-badge">${impact}</span>` : ''}</h4>`;
+        // Add body content if present
+        if (body) {
+            // Convert body to simple paragraphs - process markdown-style formatting
+            let bodyHtml = body
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                .replace(/^- (.+)$/gm, '• $1')
+                .split('\n')
+                .filter(line => line.trim())
+                .map(line => `<p class="rec-body">${line.trim()}</p>`)
+                .join('');
+            html += bodyHtml;
+        }
         if (action) html += `<p class="rec-action"><strong>📋 Action:</strong> ${action}</p>`;
         if (docs) html += `<p class="rec-docs"><a href="${docs}" target="_blank">📖 Documentation →</a></p>`;
         
