@@ -2448,25 +2448,59 @@ function formatMarkdown(text) {
         
         body = body.trim();
         
+        // Check if this is a summary card
+        const isSummary = title.toLowerCase().includes('summary') || title.toLowerCase().includes('top actions');
+        
         // Output flat HTML - hr, h4, p elements - NOTHING that can nest
-        let html = `<hr class="rec-divider">`;
-        html += `<h4 class="rec-title">${icons[type]} ${title || 'Recommendation'}${impact ? ` <span class="${badgeClasses[type]}">${impact}</span>` : ''}</h4>`;
-        // Add body content if present
-        if (body) {
-            // Convert body to simple paragraphs - process markdown-style formatting
-            let bodyHtml = body
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                .replace(/`([^`]+)`/g, '<code>$1</code>')
-                .replace(/^- (.+)$/gm, '• $1')
-                .split('\n')
-                .filter(line => line.trim())
-                .map(line => `<p class="rec-body">${line.trim()}</p>`)
-                .join('');
-            html += bodyHtml;
+        let html = `<hr class="rec-divider${isSummary ? ' rec-divider-summary' : ''}">`;
+        
+        if (isSummary) {
+            // Special summary card styling
+            html += `<div class="summary-card">`;
+            html += `<h4 class="summary-title">📊 ${title || 'Summary'}</h4>`;
+            if (impact) html += `<span class="summary-subtitle">${impact}</span>`;
+            if (body) {
+                // Process summary body with special formatting for numbered items
+                let bodyHtml = body
+                    .replace(/\*\*(\d+)\.\s*([^*]+)\*\*/g, '<div class="summary-item"><span class="summary-number">$1</span><span class="summary-item-title">$2</span></div>')
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    .replace(/`([^`]+)`/g, '<code>$1</code>')
+                    .replace(/^\s*-\s*Savings:\s*(.+)$/gm, '<div class="summary-savings">💰 $1</div>')
+                    .replace(/^\s*-\s*What:\s*(.+)$/gm, '<div class="summary-what">$1</div>')
+                    .replace(/^- (.+)$/gm, '• $1')
+                    .split('\n')
+                    .filter(line => line.trim())
+                    .map(line => {
+                        if (line.includes('summary-item') || line.includes('summary-savings') || line.includes('summary-what')) {
+                            return line.trim();
+                        }
+                        return `<p class="rec-body">${line.trim()}</p>`;
+                    })
+                    .join('');
+                html += `<div class="summary-content">${bodyHtml}</div>`;
+            }
+            html += `</div>`;
+        } else {
+            // Regular recommendation card
+            html += `<h4 class="rec-title">${icons[type]} ${title || 'Recommendation'}${impact ? ` <span class="${badgeClasses[type]}">${impact}</span>` : ''}</h4>`;
+            // Add body content if present
+            if (body) {
+                // Convert body to simple paragraphs - process markdown-style formatting
+                let bodyHtml = body
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    .replace(/`([^`]+)`/g, '<code>$1</code>')
+                    .replace(/^- (.+)$/gm, '• $1')
+                    .split('\n')
+                    .filter(line => line.trim())
+                    .map(line => `<p class="rec-body">${line.trim()}</p>`)
+                    .join('');
+                html += bodyHtml;
+            }
+            if (action) html += `<p class="rec-action"><strong>📋 Action:</strong> ${action}</p>`;
+            if (docs) html += `<p class="rec-docs"><a href="${docs}" target="_blank">📖 Documentation →</a></p>`;
         }
-        if (action) html += `<p class="rec-action"><strong>📋 Action:</strong> ${action}</p>`;
-        if (docs) html += `<p class="rec-docs"><a href="${docs}" target="_blank">📖 Documentation →</a></p>`;
         
         return html;
     });

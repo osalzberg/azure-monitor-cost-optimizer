@@ -876,6 +876,107 @@ button[type="submit"]:disabled {
     transform: translateX(4px);
 }
 
+/* Summary Card - Special Styling */
+.rec-divider-summary {
+    margin-top: 40px;
+    height: 2px;
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+}
+
+.summary-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin: 20px 0;
+    color: white;
+    box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3);
+}
+
+.summary-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+    color: white;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.summary-subtitle {
+    display: inline-block;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 20px;
+    backdrop-filter: blur(10px);
+}
+
+.summary-content {
+    margin-top: 20px;
+}
+
+.summary-content .rec-body {
+    color: rgba(255, 255, 255, 0.9);
+    padding-left: 0;
+    margin: 6px 0;
+}
+
+.summary-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 12px 0;
+    backdrop-filter: blur(10px);
+    transition: all 0.2s ease;
+}
+
+.summary-item:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: translateX(4px);
+}
+
+.summary-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+    background: white;
+    color: #667eea;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.summary-item-title {
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: white;
+    flex: 1;
+}
+
+.summary-savings {
+    color: #90EE90;
+    font-weight: 600;
+    font-size: 0.95rem;
+    padding-left: 52px;
+    margin: 4px 0;
+}
+
+.summary-what {
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.9rem;
+    padding-left: 52px;
+    margin: 4px 0 12px 0;
+}
+
 /* Force spacing between ALL elements inside recommendations */
 .recommendations-content > * + * {
     margin-top: 20px;
