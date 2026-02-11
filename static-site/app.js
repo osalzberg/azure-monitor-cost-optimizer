@@ -2865,19 +2865,58 @@ function resetChecklist() {
 
 // ============ SAVINGS COUNTER ============
 function displaySavingsCounter() {
-    const cards = document.querySelectorAll('.rec-card-savings');
+    const content = document.getElementById('recommendationsContent');
     const counter = document.getElementById('savingsCounter');
-    if (!cards.length || !counter) return counter && (counter.hidden = true);
+    const breakdown = document.getElementById('savingsBreakdown');
     
+    if (!content || !counter) return;
+    
+    // Parse all savings from badges and body text
+    const html = content.innerHTML;
     let total = 0;
-    cards.forEach(card => {
-        const m = card.querySelector('.rec-card-impact')?.textContent?.match(/\$[\d,]+\.?\d*/);
-        if (m) total += parseFloat(m[0].replace(/[$,]/g, '')) || 0;
+    const savingsItems = [];
+    
+    // Find all savings amounts in the format $X.XX, $XX, ~$XX, etc.
+    const savingsMatches = html.match(/(?:Save|Savings?|save)[^$]*\$[\d,]+(?:\.\d{2})?(?:\/month)?/gi) || [];
+    const impactMatches = html.match(/\$[\d,]+(?:\.\d{2})?(?:\/month)?[^<]*(?:savings|reduction|cheaper)/gi) || [];
+    const allMatches = [...savingsMatches, ...impactMatches];
+    
+    allMatches.forEach(match => {
+        const amountMatch = match.match(/\$([\d,]+(?:\.\d{2})?)/);
+        if (amountMatch) {
+            const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+            if (amount > 0 && amount < 100000) { // Sanity check
+                total += amount;
+            }
+        }
+    });
+    
+    // Also look for badge content with savings
+    const badges = content.querySelectorAll('.rec-badge-savings');
+    badges.forEach(badge => {
+        const text = badge.textContent;
+        const amountMatch = text.match(/\$([\d,]+(?:\.\d{2})?)/);
+        if (amountMatch) {
+            const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+            if (amount > 0 && amount < 100000) {
+                // Check if not already counted (avoid duplicates)
+                if (!allMatches.some(m => m.includes(amountMatch[0]))) {
+                    total += amount;
+                }
+            }
+        }
     });
     
     if (total > 0) {
         animateSavingsCounter(total);
         counter.hidden = false;
+        
+        // Add a simple breakdown
+        if (breakdown) {
+            breakdown.innerHTML = `<span style="color: #666; font-size: 0.9rem;">Based on identified optimization opportunities</span>`;
+        }
+    } else {
+        counter.hidden = true;
     }
 }
 
