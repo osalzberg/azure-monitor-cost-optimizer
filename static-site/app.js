@@ -2162,14 +2162,22 @@ let analyzedWorkspaceNames = [];
 
 // Populate workspace filter dropdown
 function populateWorkspaceFilter(workspaces) {
+    console.log('populateWorkspaceFilter called with:', workspaces);
     const filter = document.getElementById('workspaceFilter');
+    console.log('Filter element found:', filter);
     if (!filter) return;
     
     // Clear existing options except "All"
     filter.innerHTML = '<option value="all">All Workspaces</option>';
     
+    if (!workspaces || !Array.isArray(workspaces) || workspaces.length === 0) {
+        console.log('No workspaces to populate');
+        return;
+    }
+    
     // Get unique workspace names
-    analyzedWorkspaceNames = [...new Set(workspaces.map(ws => ws.name))].sort();
+    analyzedWorkspaceNames = [...new Set(workspaces.map(ws => ws.name).filter(Boolean))].sort();
+    console.log('Workspace names:', analyzedWorkspaceNames);
     
     // Add options
     analyzedWorkspaceNames.forEach(name => {
@@ -2178,6 +2186,8 @@ function populateWorkspaceFilter(workspaces) {
         option.textContent = name;
         filter.appendChild(option);
     });
+    
+    console.log('Filter populated with', analyzedWorkspaceNames.length, 'workspaces');
 }
 
 // Filter recommendations by workspace
