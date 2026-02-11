@@ -2156,6 +2156,93 @@ function updateProgress(id, status, text) {
     textEl.textContent = text;
 }
 
+// Global variable to store original recommendations HTML
+let originalRecommendationsHTML = '';
+let analyzedWorkspaceNames = [];
+
+// Populate workspace filter dropdown
+function populateWorkspaceFilter(workspaces) {
+    const filter = document.getElementById('workspaceFilter');
+    if (!filter) return;
+    
+    // Clear existing options except "All"
+    filter.innerHTML = '<option value="all">All Workspaces</option>';
+    
+    // Get unique workspace names
+    analyzedWorkspaceNames = [...new Set(workspaces.map(ws => ws.name))].sort();
+    
+    // Add options
+    analyzedWorkspaceNames.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        filter.appendChild(option);
+    });
+}
+
+// Filter recommendations by workspace
+function filterRecommendations() {
+    const filter = document.getElementById('workspaceFilter');
+    const content = document.getElementById('recommendationsContent');
+    
+    if (!filter || !content || !originalRecommendationsHTML) return;
+    
+    const selectedWorkspace = filter.value;
+    
+    if (selectedWorkspace === 'all') {
+        content.innerHTML = originalRecommendationsHTML;
+        return;
+    }
+    
+    // Parse the HTML and filter sections
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = originalRecommendationsHTML;
+    
+    // Find all recommendation sections (hr + h4 + content until next hr)
+    const elements = Array.from(tempDiv.children);
+    const filteredElements = [];
+    let currentSection = [];
+    let sectionTitle = '';
+    
+    elements.forEach((el, index) => {
+        if (el.tagName === 'HR' && el.classList.contains('rec-divider')) {
+            // Start of a new section - process previous section first
+            if (currentSection.length > 0) {
+                // Check if the title contains the selected workspace
+                if (sectionTitle.includes(selectedWorkspace) || sectionTitle.includes('Summary') || sectionTitle.includes('Data Overview')) {
+                    filteredElements.push(...currentSection);
+                }
+            }
+            currentSection = [el];
+            sectionTitle = '';
+        } else {
+            currentSection.push(el);
+            if (el.tagName === 'H4' && el.classList.contains('rec-title')) {
+                sectionTitle = el.textContent || '';
+            }
+        }
+    });
+    
+    // Don't forget the last section
+    if (currentSection.length > 0) {
+        if (sectionTitle.includes(selectedWorkspace) || sectionTitle.includes('Summary') || sectionTitle.includes('Data Overview')) {
+            filteredElements.push(...currentSection);
+        }
+    }
+    
+    // Rebuild the content
+    content.innerHTML = '';
+    filteredElements.forEach(el => content.appendChild(el.cloneNode(true)));
+    
+    // Show message if nothing found
+    if (filteredElements.length === 0) {
+        content.innerHTML = `<p style="color: #666; padding: 20px; text-align: center;">No recommendations found for workspace: ${selectedWorkspace}</p>`;
+    }
+}
+
+// Expose filterRecommendations to window for onclick handler
+window.filterRecommendations = filterRecommendations;
+
 // Show recommendations
 function showRecommendations(recommendations, workspaces, dataSummary) {
     const resourceInfo = document.getElementById('resourceInfo');
@@ -2188,7 +2275,12 @@ function showRecommendations(recommendations, workspaces, dataSummary) {
     `;
     
     const content = document.getElementById('recommendationsContent');
-    content.innerHTML = formatMarkdown(recommendations);
+    const formattedHTML = formatMarkdown(recommendations);
+    content.innerHTML = formattedHTML;
+    
+    // Store original HTML and populate filter
+    originalRecommendationsHTML = formattedHTML;
+    populateWorkspaceFilter(workspaces);
     
     recommendationsSection.hidden = false;
 }
