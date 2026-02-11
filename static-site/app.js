@@ -2314,7 +2314,7 @@ function formatMarkdown(text) {
     // Fix inline numbered lists (e.g., "1. foo 2. bar 3. baz" -> separate lines)
     text = text.replace(/(\d+)\.\s+([^0-9]+?)(?=\s+\d+\.\s|$)/g, '\n$1. $2\n');
     
-    // Process recommendation sections - use special marker that won't get wrapped in <p>
+    // Process recommendation sections - output FLAT HTML only, no wrapper divs
     text = text.replace(/\[CARD:(warning|savings|info|success)\]([\s\S]*?)\[\/CARD\]/g, (match, type, content) => {
         const colors = {
             warning: '#ff9800',
@@ -2346,18 +2346,14 @@ function formatMarkdown(text) {
         
         body = body.trim();
         
-        // Build SIMPLE section - white background, colored left border only, no nested elements
-        let html = `<hr style="border:none;height:1px;background:#e0e0e0;margin:30px 0;">`;
-        html += `<div style="padding-left: 16px; border-left: 4px solid ${colors[type]};">`;
-        html += `<p style="margin: 0 0 8px 0; font-size: 1.1rem; font-weight: 600; color: #333;">${icons[type]} ${title || 'Recommendation'}`;
-        if (impact) html += ` <span style="background: ${colors[type]}; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">${impact}</span>`;
-        html += `</p>`;
-        if (body) html += `<div style="color: #555; line-height: 1.6; margin-bottom: 10px;">${formatCardBody(body)}</div>`;
-        if (action) html += `<p style="margin: 10px 0; padding: 8px 12px; background: #f5f5f5; border-radius: 4px; font-size: 0.9rem;"><strong>📋 Action:</strong> ${action}</p>`;
-        if (docs) html += `<p style="margin: 8px 0 0 0;"><a href="${docs}" target="_blank" style="color: #0078d4; text-decoration: none;">📖 Documentation →</a></p>`;
-        html += `</div>`;
+        // Output COMPLETELY FLAT - just text lines, no nesting possible
+        let lines = [];
+        lines.push(`\n---\n`);
+        lines.push(`**${icons[type]} ${title || 'Recommendation'}**${impact ? ` _(${impact})_` : ''}\n`);
+        if (action) lines.push(`📋 **Action:** ${action}\n`);
+        if (docs) lines.push(`[📖 Documentation](${docs})\n`);
         
-        return html;
+        return lines.join('\n');
     });
     
     // Handle any [ACTION] tags outside of cards
