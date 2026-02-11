@@ -2314,14 +2314,8 @@ function formatMarkdown(text) {
     // Fix inline numbered lists (e.g., "1. foo 2. bar 3. baz" -> separate lines)
     text = text.replace(/(\d+)\.\s+([^0-9]+?)(?=\s+\d+\.\s|$)/g, '\n$1. $2\n');
     
-    // Process recommendation sections - output FLAT HTML only, no wrapper divs
+    // Process recommendation sections - output flat HTML elements only (no wrapper divs)
     text = text.replace(/\[CARD:(warning|savings|info|success)\]([\s\S]*?)\[\/CARD\]/g, (match, type, content) => {
-        const colors = {
-            warning: '#ff9800',
-            savings: '#4caf50',
-            info: '#2196f3',
-            success: '#00bcd4'
-        };
         const icons = {
             warning: '⚠️',
             savings: '💰',
@@ -2346,14 +2340,13 @@ function formatMarkdown(text) {
         
         body = body.trim();
         
-        // Output COMPLETELY FLAT - just text lines, no nesting possible
-        let lines = [];
-        lines.push(`\n---\n`);
-        lines.push(`**${icons[type]} ${title || 'Recommendation'}**${impact ? ` _(${impact})_` : ''}\n`);
-        if (action) lines.push(`📋 **Action:** ${action}\n`);
-        if (docs) lines.push(`[📖 Documentation](${docs})\n`);
+        // Output flat HTML - hr, h4, p elements - NOTHING that can nest
+        let html = `<hr class="rec-divider">`;
+        html += `<h4 class="rec-title">${icons[type]} ${title || 'Recommendation'}${impact ? ` <span class="rec-badge">${impact}</span>` : ''}</h4>`;
+        if (action) html += `<p class="rec-action"><strong>📋 Action:</strong> ${action}</p>`;
+        if (docs) html += `<p class="rec-docs"><a href="${docs}" target="_blank">📖 Documentation →</a></p>`;
         
-        return lines.join('\n');
+        return html;
     });
     
     // Handle any [ACTION] tags outside of cards
