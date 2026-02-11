@@ -2322,6 +2322,12 @@ function formatMarkdown(text) {
             info: 'ℹ️',
             success: '✅'
         };
+        const badgeClasses = {
+            warning: 'rec-badge rec-badge-warning',
+            savings: 'rec-badge rec-badge-savings',
+            info: 'rec-badge rec-badge-info',
+            success: 'rec-badge rec-badge-success'
+        };
         
         let title = '';
         let impact = '';
@@ -2342,7 +2348,7 @@ function formatMarkdown(text) {
         
         // Output flat HTML - hr, h4, p elements - NOTHING that can nest
         let html = `<hr class="rec-divider">`;
-        html += `<h4 class="rec-title">${icons[type]} ${title || 'Recommendation'}${impact ? ` <span class="rec-badge">${impact}</span>` : ''}</h4>`;
+        html += `<h4 class="rec-title">${icons[type]} ${title || 'Recommendation'}${impact ? ` <span class="${badgeClasses[type]}">${impact}</span>` : ''}</h4>`;
         // Add body content if present
         if (body) {
             // Convert body to simple paragraphs - process markdown-style formatting
