@@ -164,6 +164,32 @@ header h1 {
     margin: 20px 0;
 }
 
+/* Token Input Styling */
+.token-input {
+    width: 100%;
+    min-height: 80px;
+    padding: 16px;
+    font-size: 0.95rem;
+    font-family: 'Consolas', 'Monaco', monospace;
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    resize: vertical;
+    margin: 16px 0;
+    box-sizing: border-box;
+    transition: all 0.2s ease;
+}
+
+.token-input:focus {
+    outline: none;
+    border-color: var(--azure-blue);
+    box-shadow: 0 0 0 4px rgba(0, 120, 212, 0.1);
+}
+
+.token-input::placeholder {
+    color: #999;
+    font-family: inherit;
+}
+
 /* Auth Status Indicator */
 .auth-status {
     display: flex;
