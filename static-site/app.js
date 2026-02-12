@@ -2871,41 +2871,41 @@ function displaySavingsCounter() {
     
     if (!content || !counter) return;
     
-    // Parse all savings from badges and body text
-    const html = content.innerHTML;
+    // Only count savings from the green badges (rec-badge-savings) - these are the authoritative source
+    // This avoids double-counting from body text that might repeat the same numbers
     let total = 0;
-    const savingsItems = [];
+    const countedAmounts = new Set();
     
-    // Find all savings amounts in the format $X.XX, $XX, ~$XX, etc.
-    const savingsMatches = html.match(/(?:Save|Savings?|save)[^$]*\$[\d,]+(?:\.\d{2})?(?:\/month)?/gi) || [];
-    const impactMatches = html.match(/\$[\d,]+(?:\.\d{2})?(?:\/month)?[^<]*(?:savings|reduction|cheaper)/gi) || [];
-    const allMatches = [...savingsMatches, ...impactMatches];
-    
-    allMatches.forEach(match => {
-        const amountMatch = match.match(/\$([\d,]+(?:\.\d{2})?)/);
-        if (amountMatch) {
-            const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
-            if (amount > 0 && amount < 100000) { // Sanity check
-                total += amount;
-            }
-        }
-    });
-    
-    // Also look for badge content with savings
     const badges = content.querySelectorAll('.rec-badge-savings');
     badges.forEach(badge => {
         const text = badge.textContent;
-        const amountMatch = text.match(/\$([\d,]+(?:\.\d{2})?)/);
-        if (amountMatch) {
-            const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
-            if (amount > 0 && amount < 100000) {
-                // Check if not already counted (avoid duplicates)
-                if (!allMatches.some(m => m.includes(amountMatch[0]))) {
-                    total += amount;
-                }
+        // Look for dollar amounts like $XX.XX, ~$XX, Save $XX, etc.
+        const amountMatches = text.match(/\$([\d,]+(?:\.\d{2})?)/g) || [];
+        amountMatches.forEach(match => {
+            const amount = parseFloat(match.replace(/[$,]/g, ''));
+            // Create a key to avoid counting the same amount twice
+            const amountKey = amount.toFixed(2);
+            if (amount > 0 && amount < 10000 && !countedAmounts.has(amountKey)) {
+                countedAmounts.add(amountKey);
+                total += amount;
             }
-        }
+        });
     });
+    
+    // Get the total monthly cost from the page to cap savings
+    const resourceInfo = document.getElementById('resourceInfo');
+    let maxSavings = Infinity;
+    if (resourceInfo) {
+        const costMatch = resourceInfo.textContent.match(/~?\$(\d+(?:\.\d{2})?)/);
+        if (costMatch) {
+            maxSavings = parseFloat(costMatch[1]) * 0.95; // Cap at 95% of total cost
+        }
+    }
+    
+    // Cap total savings at a reasonable percentage of total cost
+    if (total > maxSavings) {
+        total = maxSavings;
+    }
     
     if (total > 0) {
         animateSavingsCounter(total);
@@ -2913,7 +2913,7 @@ function displaySavingsCounter() {
         
         // Add a simple breakdown
         if (breakdown) {
-            breakdown.innerHTML = `<span style="color: #666; font-size: 0.9rem;">Based on identified optimization opportunities</span>`;
+            breakdown.innerHTML = `<span style="font-size: 0.85rem; opacity: 0.9;">Based on ${countedAmounts.size} optimization ${countedAmounts.size === 1 ? 'opportunity' : 'opportunities'}</span>`;
         }
     } else {
         counter.hidden = true;
