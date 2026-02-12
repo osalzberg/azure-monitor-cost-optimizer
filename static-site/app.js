@@ -522,7 +522,11 @@ End with a [CARD:info] summary card with this EXACT format for the top actions:
    - What: Brief description
 [/CARD]
 
-Be CONSISTENT - always check the same things, always provide the same recommendations for the same data patterns.`;
+IMPORTANT RULES:
+1. Be CONSISTENT - always check the same things, always provide the same recommendations for the same data patterns.
+2. ONLY show recommendations where there IS an action to take. If no action is needed (e.g., no custom tables for Auxiliary Logs, Pay-As-You-Go is already optimal, retention is already optimal), DO NOT include a card for it - just skip that section entirely.
+3. Do NOT show cards that say "No action needed" or "No candidates" - these waste the user's time.
+4. Focus on ACTIONABLE recommendations that will save money.`;
 
     // Build workspace breakdown for prompt
     let workspaceBreakdown = '';
