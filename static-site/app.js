@@ -2139,21 +2139,32 @@ source | where SeverityLevel != "Debug"
 // Update progress indicator
 function updateProgress(id, status, text) {
     const item = document.getElementById(id);
+    if (!item) return;
+    
     const icon = item.querySelector('.progress-icon');
     const textEl = item.querySelector('.progress-text');
     
+    // Remove all state classes
+    item.classList.remove('loading', 'done', 'error', 'pending');
+    
     switch (status) {
         case 'running':
-            icon.textContent = '🔄';
+            item.classList.add('loading');
+            icon.textContent = ''; // CSS will add spinning animation
             break;
         case 'complete':
-            icon.textContent = '✅';
+            item.classList.add('done');
+            icon.textContent = '✓';
             break;
         case 'error':
-            icon.textContent = '❌';
+            item.classList.add('error');
+            icon.textContent = '✕';
             break;
+        default:
+            item.classList.add('pending');
+            icon.textContent = '○';
     }
-    textEl.textContent = text;
+    if (text) textEl.textContent = text;
 }
 
 // Global variable to store original recommendations HTML
